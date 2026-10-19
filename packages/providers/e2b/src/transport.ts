@@ -64,8 +64,12 @@ const createRejections = new Map<number, ConstructorParameters<typeof AdapterErr
  * exists, and SandboxError.statusCode for other HTTP rejections. TemplateError follows
  * a created-then-killed sandbox, and 5xx or transport loss are uncertain.
  */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
-export function createRejection(error: unknown, apiKey: string): E2BCreateRejected | undefined {
+export function createRejection(
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
+  error: unknown,
+  apiKey: string,
+  values: readonly string[] = [],
+): E2BCreateRejected | undefined {
   if (!(error instanceof Error) || error instanceof TemplateError) return undefined;
 
   const code =
@@ -81,7 +85,11 @@ export function createRejection(error: unknown, apiKey: string): E2BCreateReject
 
   if (!code) return undefined;
 
-  const detail = (apiKey ? error.message.replaceAll(apiKey, "[redacted]") : error.message)
+  // Create-time environment values may be secrets; a native echo never reaches a message.
+  const detail = [apiKey, ...values]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .reduce((message, secret) => message.replaceAll(secret, "[redacted]"), error.message)
     .replace(/[\p{Cc}\s]+/gu, " ")
     .trim()
     .slice(0, 300);
@@ -166,8 +174,31 @@ export type E2BTemplateState = {
   builds: { buildId: string; status: "building" | "waiting" | "ready" | "error" }[];
 };
 
+/** One team template from the native template inventory. */
+export type E2BTemplateSummary = {
+  templateId: string;
+  buildId: string;
+  buildStatus: "building" | "waiting" | "ready" | "error";
+  names: string[];
+};
+
+/** A definitive native refusal to delete a template; nothing was deleted. */
+export class E2BTemplateDeleteRejected extends Error {
+  constructor(readonly status: 400 | 401 | 403) {
+    super(`E2B template deletion rejected (${status})`);
+  }
+}
+
 export type E2BStateTransport = {
   template(id: string): Promise<E2BTemplateState | null>;
+  /** One bounded page of team templates; absent on transports without image inventory. */
+  templates?(input: {
+    teamId?: string;
+    limit: number;
+    cursor?: string;
+  }): Promise<{ items: E2BTemplateSummary[]; nextCursor?: string }>;
+  /** One native template DELETE; false when the template was already absent (404). */
+  deleteTemplate?(id: string, signal?: AbortSignal): Promise<boolean>;
   verifyAddress(id: string, names?: string[]): Promise<void>;
   tags(id: string): Promise<{ tag: string; buildId: string }[]>;
   capture(
@@ -205,6 +236,8 @@ export type E2BTransport = {
     allowInternetAccess: boolean;
     allowPublicTraffic?: boolean;
     volumeMounts?: Record<string, string>;
+    /** Native sandbox-wide `envs`; values may be secrets and never enter messages. */
+    env?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<string>;
   get(id: string): Promise<E2BRecord | null>;
@@ -668,6 +701,51 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
       capture: (id, name, signal) => Sandbox.createSnapshot(id, { ...opts, name, signal }),
       snapshots: readSnapshots,
       deleteSnapshot: (id, signal) => Sandbox.deleteSnapshot(id, { ...opts, signal }),
+      async templates(input) {
+        const query = new URLSearchParams({ limit: String(input.limit) });
+
+        if (input.teamId) query.set("teamID", input.teamId);
+
+        if (input.cursor) query.set("nextToken", input.cursor);
+        const response = await controlGet(`/v2/templates?${query}`);
+        const values = await readTemplates(response);
+
+        if (values.length > input.limit)
+          throw new Error("E2B template inventory exceeded its requested bound");
+
+        return {
+          items: values.map((value) => ({
+            templateId: value.templateID,
+            buildId: value.buildID,
+            buildStatus: value.buildStatus,
+            names: value.names,
+          })),
+          nextCursor: response.headers.get("X-Next-Token") ?? undefined,
+        };
+      },
+      async deleteTemplate(id, signal) {
+        // One native request: the template API has no retry here and a failure is never replayed.
+        const response = await fetcher(`${E2B_ENDPOINT}/templates/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          headers: { "X-API-Key": apiKey },
+          redirect: "error",
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+            : AbortSignal.timeout(30_000),
+        });
+
+        void response.body?.cancel().catch(() => undefined);
+
+        if (response.status === 400 || response.status === 401 || response.status === 403)
+          throw new E2BTemplateDeleteRejected(response.status);
+
+        if (response.status === 404) return false;
+
+        if (!response.ok)
+          throw new Error(`E2B template delete acknowledgement unavailable (${response.status})`);
+
+        return true;
+      },
       async createVolume(name, signal) {
         const response = await fetcher(`${E2B_ENDPOINT}/volumes`, {
           method: "POST",
@@ -792,12 +870,13 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
           allowInternetAccess: input.allowInternetAccess,
           network: { allowPublicTraffic: input.allowPublicTraffic ?? false },
           volumeMounts: input.volumeMounts,
+          envs: input.env,
           signal: input.signal,
         });
 
         return sandbox.sandboxId;
       } catch (error) {
-        throw createRejection(error, apiKey) ?? error;
+        throw createRejection(error, apiKey, Object.values(input.env ?? {})) ?? error;
       }
     },
     get,

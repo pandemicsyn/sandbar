@@ -91,7 +91,10 @@ const NativeSandbox = z.object({
     .optional(),
 });
 
-const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true });
+// List items may omit state; every caller re-reads the sandbox detail before relying on it.
+const ListedSandbox = NativeSandbox.omit({ networkBlockAll: true, public: true }).extend({
+  state: z.string().optional(),
+});
 
 const ListResponse = z.object({
   items: z.array(ListedSandbox),
@@ -157,6 +160,15 @@ function volumeContains(native: Sandbox, path: string): boolean {
 }
 
 type DaytonaInventoryPage = Awaited<ReturnType<ProviderDriver["inventory"]>>;
+
+/** A Sandbar-labelled sandbox with the creation labels its reference is built from. */
+type DaytonaListedSandbox = {
+  observation: SandboxObservation;
+  nativeState: string;
+  creation?: { operation: string; submission: string };
+};
+
+type DaytonaListingPage = { items: DaytonaListedSandbox[]; nextCursor?: string };
 
 function endpointConfigurationError(field: "apiUrl" | "toolboxOrigin"): z.ZodError {
   return new z.ZodError([
@@ -387,7 +399,11 @@ const createRejections = new Map<number, z.infer<typeof DriverError>["code"]>([
 ]);
 
 /** Daytona's own reason (quota, tier, snapshot state), single-line, bounded and without the API key. */
-async function nativeMessage(response: Response, apiKey: string): Promise<string | undefined> {
+async function nativeMessage(
+  response: Response,
+  apiKey: string,
+  values: readonly string[] = [],
+): Promise<string | undefined> {
   try {
     const body = await boundedJson(
       response,
@@ -395,8 +411,14 @@ async function nativeMessage(response: Response, apiKey: string): Promise<string
       16_384,
     );
 
-    const text = (Array.isArray(body.message) ? body.message.join("; ") : body.message)
-      .replaceAll(apiKey, "[redacted]")
+    // Create-time environment values may be secrets; a native echo never reaches a message.
+    const text = [apiKey, ...values]
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)
+      .reduce(
+        (message, secret) => message.replaceAll(secret, "[redacted]"),
+        Array.isArray(body.message) ? body.message.join("; ") : body.message,
+      )
       .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
       .replace(/[\p{Cc}\s]+/gu, " ")
       .trim();
@@ -849,6 +871,8 @@ export class DaytonaDriver implements ProviderDriver {
     networkPolicy: string;
     labels?: Record<string, string>;
     mounts?: import("@sandbar-sdk/adapter").MountSpec[];
+    /** Native sandbox-wide environment; never copied into results or messages. */
+    env?: Record<string, string>;
     signal?: AbortSignal;
   }): Promise<DaytonaCreateResult> {
     this.sameScope(input.scope);
@@ -916,7 +940,8 @@ export class DaytonaDriver implements ProviderDriver {
           "application/json",
         );
 
-        if (!built.ok) return await this.createRejection(built, "image build", uncertain);
+        if (!built.ok)
+          return await this.createRejection(built, "image build", uncertain, false, input.env);
         const snapshot = await boundedJson(built, Snapshot);
 
         if (
@@ -995,6 +1020,7 @@ export class DaytonaDriver implements ProviderDriver {
         target: this.scope.region,
         public: false,
         labels,
+        env: input.env && Object.keys(input.env).length ? input.env : undefined,
         volumes: input.mounts?.map((mount) => ({
           volumeId: mount.volume.nativeId,
           mountPath: mount.path,
@@ -1018,6 +1044,7 @@ export class DaytonaDriver implements ProviderDriver {
           "sandbox creation",
           uncertain,
           retainedSnapshotId !== undefined,
+          input.env,
         );
       const raw = await boundedJson(response, z.unknown());
 
@@ -1122,8 +1149,14 @@ export class DaytonaDriver implements ProviderDriver {
     step: string,
     uncertain: (reason: string) => DaytonaCreateResult,
     effectful = false,
+    env?: Record<string, string>,
   ): Promise<DaytonaCreateResult> {
-    const detail = await nativeMessage(response, this.config.credentials.apiKey);
+    const detail = await nativeMessage(
+      response,
+      this.config.credentials.apiKey,
+      Object.values(env ?? {}),
+    );
+
     const message = `Daytona rejected ${step} (HTTP ${response.status})${detail ? `: ${detail}` : ""}`;
     const code = createRejections.get(response.status);
 
@@ -1147,13 +1180,22 @@ export class DaytonaDriver implements ProviderDriver {
       : null;
   }
   async inventory(input: { scope: NativeScope; cursor?: string; limit: number }) {
+    const page = await this.listing(input);
+    const result: DaytonaInventoryPage = { items: page.items.map((item) => item.observation) };
+
+    if (page.nextCursor) result.nextCursor = page.nextCursor;
+
+    return result;
+  }
+  /** Sandbar-labelled sandboxes with their verified native state and creation labels. */
+  async listing(input: { scope: NativeScope; cursor?: string; limit: number }) {
     this.sameScope(input.scope);
     const query = new URLSearchParams({ limit: String(input.limit) });
 
     if (input.cursor) query.set("cursor", input.cursor);
     const page = await this.json("GET", `/sandbox?${query}`, ListResponse);
 
-    const result: DaytonaInventoryPage = { items: [] };
+    const result: DaytonaListingPage = { items: [] };
 
     for (const listed of page.items) {
       if (
@@ -1169,8 +1211,18 @@ export class DaytonaDriver implements ProviderDriver {
         detail &&
         detail.labels?.["sandbar.submission"] === listed.labels["sandbar.submission"] &&
         detail.labels?.["sandbar.operation"] === listed.labels["sandbar.operation"]
-      )
-        result.items.push(observed(this.scope, detail, this.config.configuration.networkPolicy));
+      ) {
+        const operation = detail.labels["sandbar.operation"];
+        const submission = detail.labels["sandbar.submission"];
+
+        const item: DaytonaListedSandbox = {
+          observation: observed(this.scope, detail, this.config.configuration.networkPolicy),
+          nativeState: detail.state,
+        };
+
+        if (operation && submission) item.creation = { operation, submission };
+        result.items.push(item);
+      }
     }
 
     if (page.nextCursor) result.nextCursor = page.nextCursor;

@@ -443,6 +443,23 @@ export const ArtifactDeletionResult = z.strictObject({
 
 export type ArtifactDeletionResult = z.infer<typeof ArtifactDeletionResult>;
 
+/** A prepared image observed on the provider; the native ID is the `Image.prepared()` value. */
+export const ImageInfo = z.strictObject({
+  reference: ResourceReference.refine((ref) => ref.kind === "image"),
+  state: z.enum(["creating", "ready", "deleting", "unknown"]),
+  createdAt: z.iso.datetime().nullable(),
+  /** OCI source the provider recorded for the build; null when unknown or not built from OCI. */
+  source: z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }).nullable(),
+  visibility: z.enum(["private", "public", "unknown"]),
+  /** Known native resources using this image; null when they could not be verified. */
+  nativeDependencies: z
+    .array(z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(512) }))
+    .max(128)
+    .nullable(),
+});
+
+export type ImageInfo = z.infer<typeof ImageInfo>;
+
 export const MountCapabilities = z.strictObject({
   timing: z.literal("create"),
   access: z
@@ -481,6 +498,28 @@ export const InventoryInput = z.strictObject({
 });
 
 export type InventoryInput = z.infer<typeof InventoryInput>;
+
+/**
+ * One listed sandbox. `reference` is the same verified reference `reopen` accepts, or null when the
+ * adapter cannot rebuild it from native evidence (for example, missing creation markers or no
+ * reopen support). Never synthesize ownership, generation or creation correlation for a listing.
+ */
+export const SandboxListItem = z.strictObject({
+  id: z.string().min(1).max(512),
+  state: SandboxState,
+  reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+});
+
+export type SandboxListItem = Omit<z.infer<typeof SandboxListItem>, "reference"> & {
+  reference: SandboxReference | null;
+};
+
+/** A bounded page of listed sandboxes and the scope the listing covers. */
+export type SandboxListPage = {
+  items: SandboxListItem[];
+  nextCursor?: string;
+  coverage: "provider-scope" | "sandbar-managed";
+};
 
 export const DestroyInput = z.strictObject({
   id: z.string().min(1).max(512),
@@ -537,6 +576,12 @@ export type StateCapabilities = {
   snapshots: {
     capture: Support<{ profiles: SnapshotProfile[]; defaultProfileId: string }>;
     restore: Support<RestoreCapabilities>;
+    inspect: Support<{}>;
+    list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
+    delete: Support<{}>;
+  };
+  /** Inspection, inventory and deletion of prepared images on this connection. */
+  imageManagement: {
     inspect: Support<{}>;
     list: Support<{ coverage: "provider-scope" | "sandbar-managed" }>;
     delete: Support<{}>;
@@ -668,6 +713,15 @@ export async function stateCapabilities(
         : unsupportedState(),
       delete: implemented(!!session.snapshotDelete),
     },
+    imageManagement: {
+      inspect: implemented(!!session.imageInspect),
+      list: session.imageList
+        ? session.imageListCoverage
+          ? { status: "supported", value: { coverage: session.imageListCoverage } }
+          : { status: "unknown", reason: "Image inventory coverage is not established" }
+        : unsupportedState(),
+      delete: implemented(!!session.imageDelete),
+    },
     volumes:
       resources.volumes.status === "supported"
         ? {
@@ -777,6 +831,15 @@ export async function checkCreate(
       reason: `Network policy '${input.networkPolicy}' is unsupported by this connection; supported policies: ${session.supports.network.join(", ") || "none"}. Configure a separate connection with the requested policy if the adapter supports it.`,
     };
 
+  if (input.env && Object.keys(input.env).length && !session.supports.createEnv)
+    return {
+      status: "unsupported",
+      reason: "Create-time environment variables are unsupported by this adapter",
+    };
+
+  // Read-only capability hooks never need (possibly secret) environment values.
+  const { env: _env, ...probe } = input;
+
   if (input.mounts?.length) {
     const mounts = z.array(MountSpec).max(32).parse(input.mounts);
 
@@ -784,7 +847,7 @@ export async function checkCreate(
       return { status: "unsupported", reason: "Create-time mounts are not implemented" };
 
     const result = await readBeforeDeadline(
-      (ctx) => session.checkMounts!({ ...input, mounts }, ctx),
+      (ctx) => session.checkMounts!({ ...probe, mounts }, ctx),
       context,
     );
 
@@ -794,7 +857,7 @@ export async function checkCreate(
   let snapshot: SnapshotPlan | undefined;
 
   if (input.requirements?.snapshot) {
-    const caps = await stateCapabilities(session, { create: input }, context);
+    const caps = await stateCapabilities(session, { create: probe }, context);
     const result = resolveSnapshot(caps.snapshots.capture, input.requirements.snapshot, "running");
 
     if (result.status !== "supported") return result;
@@ -854,6 +917,8 @@ export const DirectCapabilities = z.strictObject({
   /** `images.build()` turns an OCI image into a prepared one on this connection. */
   imageBuild: z.boolean(),
   network: z.array(z.string()),
+  /** `create({ env })` sets sandbox-wide environment variables on this connection. */
+  createEnv: z.boolean().optional(),
   exec: z.boolean(),
   inspect: z.boolean(),
   inventory: z.boolean(),
@@ -871,6 +936,15 @@ export const DirectCapabilities = z.strictObject({
     ),
     delete: supportSchema(z.strictObject({})),
   }),
+  imageManagement: z
+    .strictObject({
+      inspect: supportSchema(z.strictObject({})),
+      list: supportSchema(
+        z.strictObject({ coverage: z.enum(["provider-scope", "sandbar-managed"]) }),
+      ),
+      delete: supportSchema(z.strictObject({})),
+    })
+    .optional(),
   volumes: supportSchema(VolumeCapabilities),
   mounts: supportSchema(MountCapabilities).optional(),
   suspension: supportSchema(
@@ -884,7 +958,7 @@ export const DirectCapabilities = z.strictObject({
 
 export type DirectCapabilities = Omit<
   z.infer<typeof DirectCapabilities>,
-  "snapshots" | "volumes" | "suspension"
+  "snapshots" | "volumes" | "suspension" | "imageManagement"
 > &
   Omit<StateCapabilities, "mounts"> & { mounts?: Support<MountCapabilities> };
 

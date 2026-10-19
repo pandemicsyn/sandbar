@@ -1006,3 +1006,89 @@ test("Modal setup supplies a working default image and a lifetime up to 24 hours
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });
+
+test("Modal lists the verified App's sandboxes without reopenable references", async () => {
+  const records = [
+    { id: "sb-1", tags: {}, running: true },
+    { id: "sb-2", tags: {}, running: false },
+    { id: "sb-3", tags: { team: "other" }, running: true },
+  ];
+
+  const calls = { lookups: 0, lists: 0, yielded: 0 };
+
+  const transport: ModalTransport = {
+    async lookupApp() {
+      calls.lookups++;
+
+      return "ap-main";
+    },
+    async imageExists() {
+      return true;
+    },
+    async create() {
+      throw new Error("unused");
+    },
+    async findByName() {
+      return null;
+    },
+    async *list(appId) {
+      expect(appId).toBe("ap-main");
+      calls.lists++;
+
+      for (const record of records) {
+        calls.yielded++;
+        yield record;
+      }
+    },
+    async terminate() {
+      return false;
+    },
+    async poll() {
+      return "missing";
+    },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    async fileExists() {
+      return false;
+    },
+    async start() {},
+    async stdin() {},
+    async result() {
+      return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
+    },
+    close() {},
+  };
+
+  const client = await Sandbar.connect({
+    adapter: createModalAdapter(() => transport),
+    config: { appName: "existing", environment: "main" },
+    credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+  });
+
+  try {
+    const lookups = calls.lookups;
+    const first = await client.sandboxes.list({ limit: 1 });
+    expect(first).toEqual({
+      coverage: "provider-scope",
+      items: [{ id: "sb-1", state: "running", reference: null }],
+      nextCursor: "1",
+    });
+    // The page stops reading after one look-ahead record and re-verifies the App once.
+    expect(calls).toMatchObject({ lookups: lookups + 1, lists: 1, yielded: 2 });
+
+    const rest = await client.sandboxes.list({ cursor: first.nextCursor });
+    expect(rest).toEqual({
+      coverage: "provider-scope",
+      items: [
+        { id: "sb-2", state: "unknown", reference: null },
+        { id: "sb-3", state: "running", reference: null },
+      ],
+    });
+    await expect(client.sandboxes.list({ cursor: "x" })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+  } finally {
+    await client.close();
+  }
+});

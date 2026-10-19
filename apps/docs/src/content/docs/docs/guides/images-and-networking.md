@@ -46,7 +46,30 @@ Creation uses the connection's network policy. Close the connection in an outer 
 
 Pass the full `built.prepared` value to `Image.prepared()`: it includes the provider and verified scope, so another account or scope cannot accidentally use it. Public OCI references are supported; the SDK has no shared private-registry credential option. Daytona requires a version tag or SHA-256 digest and rejects `latest`, `lts` and `stable`. Use a digest when you need an exact immutable image.
 
-**Destroying a sandbox does not delete its built template or snapshot.** Keep `built.retainedResources` available and arrange separate provider-side cleanup for artifacts you own, including when sandbox creation fails. A record with unknown ownership does not prove that deletion is safe. Borrowed prepared images are never sandbox cleanup targets.
+**Destroying a sandbox does not delete its built template or snapshot.** Keep `built.reference` (or `built.retainedResources`) available and delete images you own separately, including when sandbox creation fails. Borrowed prepared images are never sandbox cleanup targets.
+
+## Inspect, list and delete images
+
+`built.reference` is a resource reference of kind `"image"`. Its `ownership` is `"verified-created"` only when the adapter proved this build created the image; a build recovered after a lost response reports `"unknown"`. Persist the whole reference, then reopen and delete the image with it:
+
+```ts
+const image = await sandbar.images.get(built.reference);
+console.log(await image.inspect()); // state, visibility, source and known dependencies
+await image.delete(); // or sandbar.images.delete(built.reference)
+```
+
+`images.list({ limit: 20, cursor })` returns a bounded page of the provider's images with a `coverage` value, like [snapshot and volume inventory](/docs/guides/snapshots-and-volumes/). Finding an image in a list does not prove you own it, so listed items have unknown ownership. `(await sandbar.capabilities()).imageManagement` reports whether inspect, list and delete are supported; a missing operation rejects with `UNSUPPORTED`.
+
+Deletion follows the snapshot deletion rules. The reference must match the connection's provider and scope. The adapter refuses public or shared images, captured sandbox snapshots (delete those with `snapshots.delete()`) and images that sandboxes or other native resources still use, rejecting with no effect before it sends anything. Deletion sends one native request and never resends it. If the response is lost and the image is not then observed gone, `delete()` rejects with `OUTCOME_UNKNOWN`; `submitDelete()` returns an operation whose saved reference you can recover later to learn whether the image is gone.
+
+| Provider       | Images                      | Get, list and delete                                                                                                   |
+| -------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| E2B            | Templates                   | Supported. Delete only removes a private, single-build template that no sandbox uses. See [E2B](/docs/providers/e2b/). |
+| Daytona        | Native snapshots            | Supported. Delete refuses general snapshots and snapshots used by warm pools. See [Daytona](/docs/providers/daytona/). |
+| boxd           | OCI images, booted directly | Unsupported: there is no provider-side image resource.                                                                 |
+| Vercel Sandbox | Managed images only         | Unsupported.                                                                                                           |
+
+Image deletion has deterministic test coverage only; no live deletion has been recorded.
 
 ## Select a network policy
 
@@ -78,3 +101,30 @@ Omitted create and restore policies use the connection default, so most applicat
 The option was previously named `networkPolicy`, and Vercel used `vercel-deny-all` and `vercel-allow-all`. Those spellings still work and are deprecated; passing both `network` and `networkPolicy` with different values rejects.
 
 `snapshot.restore()` uses the current connection's policy, not the captured sandbox's networking. Saved operations keep the policy resolved at submission when you recover them. Outbound policies do not open a public preview URL; see [Preview access](/docs/guides/preview-access/).
+
+## Set environment variables
+
+Pass `env` at creation to set variables for every command, process and terminal in the sandbox. A per-call `env` on `exec()` or `processes.start()` overrides the same name for that call only:
+
+```ts
+const box = await client.sandboxes.create({
+  env: { API_TOKEN: process.env.API_TOKEN!, NODE_ENV: "production" },
+});
+
+await box.exec(["node", "app.js"]); // sees API_TOKEN and NODE_ENV=production
+await box.exec({ command: { kind: "argv", argv: ["node", "app.js"] }, env: { NODE_ENV: "test" } });
+```
+
+The variables belong to the sandbox: they still apply after `sandboxes.get(reference)` reopens it in another process, without passing them again. Names match `[A-Za-z_][A-Za-z0-9_]*`; values are strings without NUL. A request holds at most 128 variables and 64 KiB of names and values. Invalid input rejects with `INVALID_ARGUMENT` before any provider call, and the message never repeats a name or value. An empty `env` asks for nothing.
+
+Values are often secrets, so Sandbar never writes them into operation references, recovery tokens, telemetry or its own error messages, and adapters redact an echoed value from provider error text. The provider still stores them with the sandbox, and any process inside it can read them.
+
+| Provider       | Create-time `env`                                                               |
+| -------------- | ------------------------------------------------------------------------------- |
+| Daytona        | Native sandbox `env` on creation.                                               |
+| E2B            | Native sandbox `envs` on creation.                                              |
+| Vercel Sandbox | Native session `env` on creation; persistent sandboxes keep it on resume.       |
+| Modal          | Native sandbox environment, sent with the single create request (experimental). |
+| boxd           | Unsupported: boxd's native machine env is not established for exec sessions.    |
+
+`client.capabilities().createEnv` reports whether the connection supports it. On a connection that does not, `checkCreate({ env })` returns `unsupported` and `create({ env })` rejects with `UnsupportedFeatureError` before allocating anything; pass the variables per call with `exec({ env })` instead. `snapshot.restore()` does not take `env`; whether a restored sandbox keeps the source's variables depends on the provider's snapshot, so pass them per call if a restored sandbox needs them. Live provider acceptance of create-time variables has not been run.

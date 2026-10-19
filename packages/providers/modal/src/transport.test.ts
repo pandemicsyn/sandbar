@@ -336,6 +336,47 @@ test("pinned OCI path builds once and creates one V2 sandbox in the same submit"
   }
 });
 
+test("pinned V2 create sends env as ephemeral secrets in the one create request", async () => {
+  const previous = process.env.MODAL_SERVER_URL;
+  process.env.MODAL_SERVER_URL = `http://127.0.0.1:${port}`;
+  createSuccess = true;
+
+  try {
+    calls.clear();
+
+    const client = new ModalClient({
+      tokenId: "ak-fixture",
+      tokenSecret: "as-fixture",
+      maxThrottleWaitSecs: 0,
+      grpcMiddleware: [noRetryGrpcMiddleware],
+    });
+
+    // SAFETY: A prebuilt image skips building; create reads only the App ID in this fixture.
+    const sandbox = await client.sandboxes.experimentalCreate(
+      { appId: "ap-fixture", environmentName: "main" } as never,
+      { imageId: "im-fixture", build: async () => undefined } as never,
+      { name: "sub-env", blockNetwork: true, env: { API_TOKEN: "fixture-env-value" } },
+    );
+
+    expect(sandbox.sandboxId).toBe("sb-oci");
+    expect(calls.get(createPath)).toBe(1);
+    expect([...calls.keys()].filter((key) => key.includes("Secret"))).toEqual([]);
+    const secrets = parse(createRequest!).get(3);
+    expect(secrets).toBeInstanceOf(Uint8Array);
+    // SAFETY: The fixture just checked the native ephemeral secret map is bytes.
+    const encoded = Buffer.from(secrets as Uint8Array).toString("utf8");
+    expect(encoded).toContain("API_TOKEN");
+    expect(encoded).toContain("fixture-env-value");
+    sandbox.detach();
+    client.close();
+  } finally {
+    createSuccess = false;
+
+    if (previous === undefined) delete process.env.MODAL_SERVER_URL;
+    else process.env.MODAL_SERVER_URL = previous;
+  }
+});
+
 test.each([
   [grpc.status.PERMISSION_DENIED, "FORBIDDEN"],
   [grpc.status.RESOURCE_EXHAUSTED, "CAPACITY"],

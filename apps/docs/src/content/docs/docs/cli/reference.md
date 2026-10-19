@@ -45,24 +45,27 @@ With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false
 Create a sandbox and print its name.
 
 ```sh
-sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>]
+sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--env K=V]...
 ```
 
-| Flag                 | Description                                                           |
-| -------------------- | --------------------------------------------------------------------- |
-| `--name <name>`      | Store name (default: generated, like sb-1a2b3)                        |
-| `--image <oci-ref>`  | OCI image, e.g. python:3.12; default is the profile's image           |
-| `--prepared <id>`    | Provider-prepared image id (template, snapshot name)                  |
-| `--network <policy>` | blocked or internet; default is the profile's policy                  |
-| `--label <k=v>`      | Label to set (repeatable)                                             |
-| `--build`            | Build --image now if this provider needs a build and none is recorded |
-| `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing      |
+| Flag                 | Description                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `--name <name>`      | Store name (default: generated, like sb-1a2b3)                                                  |
+| `--image <oci-ref>`  | OCI image, e.g. python:3.12; default is the profile's image                                     |
+| `--prepared <id>`    | Provider-prepared image id (template, snapshot name)                                            |
+| `--network <policy>` | blocked or internet; default is the profile's policy                                            |
+| `--label <k=v>`      | Label to set (repeatable)                                                                       |
+| `--env <K=V>`        | Environment variable for every command in the sandbox (repeatable; K alone copies it from here) |
+| `--env-file <path>`  | Read K=V lines into the sandbox environment (repeatable; --env wins)                            |
+| `--build`            | Build --image now if this provider needs a build and none is recorded                           |
+| `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing                                |
 
 Examples:
 
 ```sh
 sandbar create --name web --network internet
 sandbar create --name job-42 --if-not-exists --json
+sandbar create --name ci --env-file .env --env API_TOKEN
 ```
 
 ## ls
@@ -70,18 +73,39 @@ sandbar create --name job-42 --if-not-exists --json
 List sandboxes in the store with their current state.
 
 ```sh
-sandbar ls [--offline]
+sandbar ls [--offline | --remote]
 ```
 
-| Flag        | Description                                  |
-| ----------- | -------------------------------------------- |
-| `--offline` | Show stored records without asking providers |
+| Flag        | Description                                                         |
+| ----------- | ------------------------------------------------------------------- |
+| `--offline` | Show stored records without asking providers                        |
+| `--remote`  | List the profile's sandboxes from the provider instead of the store |
 
 Examples:
 
 ```sh
 sandbar ls
 sandbar ls --json
+sandbar ls --remote --provider daytona
+```
+
+## adopt
+
+Add a sandbox from the provider's listing to the store so other commands reach it.
+
+```sh
+sandbar adopt <id> [--name <name>]
+```
+
+| Flag            | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `--name <name>` | Store name (default: generated, like sb-1a2b3) |
+
+Examples:
+
+```sh
+sandbar ls --remote
+sandbar adopt 4f1c2a --name worker
 ```
 
 ## inspect
@@ -126,14 +150,15 @@ Run a command in a sandbox; exits with the command's exit code.
 sandbar exec <sandbox> [--cwd <dir>] [--env K=V]... [--stdin] -- <command> [args...]
 ```
 
-| Flag                   | Description                                        |
-| ---------------------- | -------------------------------------------------- |
-| `--cwd <dir>`          | Working directory in the sandbox                   |
-| `--env <K=V>`          | Environment variable (repeatable)                  |
-| `--stdin`              | Send this process's stdin to the command           |
-| `--stdin-file <path>`  | Send a local file as the command's stdin           |
-| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s) |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                     |
+| Flag                   | Description                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------- |
+| `--cwd <dir>`          | Working directory in the sandbox                                                |
+| `--env <K=V>`          | Environment variable for this command (repeatable; K alone copies it from here) |
+| `--env-file <path>`    | Read K=V lines into this command's environment (repeatable; --env wins)         |
+| `--stdin`              | Send this process's stdin to the command                                        |
+| `--stdin-file <path>`  | Send a local file as the command's stdin                                        |
+| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                              |
+| `--max-output <size>`  | Captured output limit, e.g. 1m                                                  |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -152,14 +177,15 @@ Run a shell script in a sandbox; exits with its exit code.
 sandbar sh <sandbox> '<script>' | sandbar sh <sandbox> -- '<script>'
 ```
 
-| Flag                   | Description                                        |
-| ---------------------- | -------------------------------------------------- |
-| `--cwd <dir>`          | Working directory in the sandbox                   |
-| `--env <K=V>`          | Environment variable (repeatable)                  |
-| `--stdin`              | Send this process's stdin to the command           |
-| `--stdin-file <path>`  | Send a local file as the command's stdin           |
-| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s) |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                     |
+| Flag                   | Description                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------- |
+| `--cwd <dir>`          | Working directory in the sandbox                                                |
+| `--env <K=V>`          | Environment variable for this command (repeatable; K alone copies it from here) |
+| `--env-file <path>`    | Read K=V lines into this command's environment (repeatable; --env wins)         |
+| `--stdin`              | Send this process's stdin to the command                                        |
+| `--stdin-file <path>`  | Send a local file as the command's stdin                                        |
+| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                              |
+| `--max-output <size>`  | Captured output limit, e.g. 1m                                                  |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -178,21 +204,22 @@ Create a sandbox, run one command, and always destroy it.
 sandbar run [create flags] [exec flags] [--keep] -- <command> [args...]
 ```
 
-| Flag                   | Description                                                           |
-| ---------------------- | --------------------------------------------------------------------- |
-| `--name <name>`        | Store name (default: generated, like sb-1a2b3)                        |
-| `--image <oci-ref>`    | OCI image, e.g. python:3.12; default is the profile's image           |
-| `--prepared <id>`      | Provider-prepared image id (template, snapshot name)                  |
-| `--network <policy>`   | blocked or internet; default is the profile's policy                  |
-| `--label <k=v>`        | Label to set (repeatable)                                             |
-| `--build`              | Build --image now if this provider needs a build and none is recorded |
-| `--cwd <dir>`          | Working directory in the sandbox                                      |
-| `--env <K=V>`          | Environment variable (repeatable)                                     |
-| `--stdin`              | Send this process's stdin to the command                              |
-| `--stdin-file <path>`  | Send a local file as the command's stdin                              |
-| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                    |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                                        |
-| `--keep`               | Keep the sandbox and print its name on stderr                         |
+| Flag                   | Description                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------- |
+| `--name <name>`        | Store name (default: generated, like sb-1a2b3)                                  |
+| `--image <oci-ref>`    | OCI image, e.g. python:3.12; default is the profile's image                     |
+| `--prepared <id>`      | Provider-prepared image id (template, snapshot name)                            |
+| `--network <policy>`   | blocked or internet; default is the profile's policy                            |
+| `--label <k=v>`        | Label to set (repeatable)                                                       |
+| `--env <K=V>`          | Environment variable for this command (repeatable; K alone copies it from here) |
+| `--env-file <path>`    | Read K=V lines into this command's environment (repeatable; --env wins)         |
+| `--build`              | Build --image now if this provider needs a build and none is recorded           |
+| `--cwd <dir>`          | Working directory in the sandbox                                                |
+| `--stdin`              | Send this process's stdin to the command                                        |
+| `--stdin-file <path>`  | Send a local file as the command's stdin                                        |
+| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                              |
+| `--max-output <size>`  | Captured output limit, e.g. 1m                                                  |
+| `--keep`               | Keep the sandbox and print its name on stderr                                   |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -205,16 +232,18 @@ sandbar run --network internet -- curl -sI https://example.com
 
 ## image
 
-Build OCI images for providers that need it, and list or forget the builds.
+Build OCI images for providers that need it, and list, delete or forget the builds.
 
 ```sh
-sandbar image build <oci-ref> [--name <name>] [--refresh] | ls | inspect <name> | forget <name>
+sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> [--force] | forget <name>
 ```
 
 | Flag            | Description                                                             |
 | --------------- | ----------------------------------------------------------------------- |
 | `--name <name>` | Record name for a build (default: from the reference, like python-3-12) |
 | `--refresh`     | Build again even if this reference is recorded                          |
+| `--remote`      | List the images on the provider for this profile, not the local records |
+| `--force`       | Delete a recorded image this CLI did not verifiably create              |
 
 Examples:
 
@@ -222,6 +251,8 @@ Examples:
 sandbar image build python:3.12 --provider e2b
 sandbar create --image python:3.12 --provider e2b
 sandbar image ls
+sandbar image ls --remote --provider e2b
+sandbar image rm python-3-12
 sandbar image forget python-3-12
 ```
 

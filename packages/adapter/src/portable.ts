@@ -16,12 +16,42 @@ export const ImageSource = z.discriminatedUnion("kind", [
 
 export const NetworkSelection = z.strictObject({ policy: z.string().min(1).max(128) });
 
+export const MAX_CREATE_ENV_ENTRIES = 128;
+
+export const MAX_CREATE_ENV_BYTES = 65_536;
+
+/**
+ * Sandbox-wide environment variables set at creation. Values are often secrets:
+ * validation reports only that the input is invalid, never a key or value.
+ */
+export const CreateEnv = z
+  .record(
+    z
+      .string()
+      .max(256)
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    z
+      .string()
+      .max(8192)
+      .refine((value) => !value.includes("\0")),
+  )
+  .refine(
+    (env) =>
+      Object.keys(env).length <= MAX_CREATE_ENV_ENTRIES &&
+      Object.entries(env).reduce(
+        (total, [key, value]) =>
+          total + new TextEncoder().encode(key).length + new TextEncoder().encode(value).length,
+        0,
+      ) <= MAX_CREATE_ENV_BYTES,
+  );
+
 export const CreateSandboxInput = z.strictObject({
   environment: ImageSource,
   requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
   region: z.string().min(1).max(128).optional(),
   network: NetworkSelection.optional(),
   labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
+  env: CreateEnv.optional(),
 });
 
 export const ExecCommand = z.discriminatedUnion("kind", [

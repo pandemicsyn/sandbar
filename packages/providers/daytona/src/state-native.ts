@@ -17,6 +17,7 @@ import {
   ResourceReference,
   type SnapshotInfo,
   SnapshotInfo as SnapshotInfoSchema,
+  type ImageInfo,
   type VolumeInfo,
   type ReadContext,
   type CreateInput,
@@ -131,7 +132,7 @@ class TerminalCaptureError extends Error {
 }
 
 const DeleteIdentity = z.strictObject({
-  kind: z.enum(["snapshot", "volume"]),
+  kind: z.enum(["snapshot", "volume", "image"]),
   provider: z.literal("daytona"),
   nativeId: z.string().min(1).max(512),
   generation: z.string().min(1).max(512).optional(),
@@ -161,6 +162,9 @@ function canObserveDelete(token: z.infer<typeof DeleteToken>) {
   return token.accepted || token.stage === "uncertain";
 }
 
+/** Daytona prepared images are native snapshots; `imageName` records an OCI build source. */
+const NativeImage = NativeSnapshot.extend({ imageName: z.string().nullable().optional() });
+
 type Fields = Pick<
   AdapterSession,
   | "snapshotProfiles"
@@ -169,6 +173,10 @@ type Fields = Pick<
   | "snapshotListCoverage"
   | "snapshotList"
   | "snapshotDelete"
+  | "imageDelete"
+  | "imageInspect"
+  | "imageListCoverage"
+  | "imageList"
   | "volumeCreate"
   | "volumeInspect"
   | "volumeList"
@@ -190,7 +198,7 @@ export function daytonaState(input: {
   const captured = new Set<string>();
 
   const reference = (
-    kind: "snapshot" | "volume",
+    kind: "snapshot" | "volume" | "image",
     id: string,
     ownership: ResourceReference["ownership"] = "unknown",
   ): ResourceReference => ({
@@ -507,6 +515,72 @@ export function daytonaState(input: {
     return info;
   }
 
+  function imageInfo(
+    v: z.infer<typeof NativeImage>,
+    ownership: ResourceReference["ownership"] = "unknown",
+  ): ImageInfo {
+    if (v.organizationId !== scope.authority.id && !v.general)
+      throw new AdapterError("CONFLICT", "Image organization differs");
+
+    const created = v.createdAt ? Date.parse(v.createdAt) : Number.NaN;
+
+    return {
+      reference: reference("image", v.id, ownership),
+      state:
+        v.state === "active" && v.regionIds?.includes(input.target)
+          ? "ready"
+          : ["building", "pending", "pulling", "snapshotting"].includes(v.state)
+            ? "creating"
+            : v.state === "removing"
+              ? "deleting"
+              : "unknown",
+      createdAt: Number.isFinite(created) ? new Date(created).toISOString() : null,
+      source:
+        v.imageName && !v.sourceSandboxId
+          ? { kind: "oci", value: v.imageName.slice(0, 1024) }
+          : null,
+      visibility: v.general ? "public" : "private",
+      nativeDependencies: null,
+    };
+  }
+
+  /** Inspect a native snapshot as a prepared image; deletion requires a private OCI build. */
+  async function inspectImage(ref: ResourceReference, ctx?: ReadContext, deleting = false) {
+    check(ref);
+
+    if (ref.kind !== "image") throw new AdapterError("INVALID_ARGUMENT", "Wrong resource kind");
+
+    const v = await json(
+      await request("GET", `/snapshots/${encodeURIComponent(ref.nativeId)}`, undefined, ctx),
+      NativeImage,
+    );
+
+    if (v.id !== ref.nativeId) throw new AdapterError("CONFLICT", "Image identity differs");
+
+    if (deleting && (v.general || v.organizationId !== scope.authority.id))
+      throw new AdapterError(
+        "CONFLICT",
+        "Explicit deletion requires a private image in the verified organization",
+      );
+
+    if (deleting && v.sourceSandboxId)
+      throw new AdapterError(
+        "CONFLICT",
+        "This native snapshot was captured from a sandbox; delete it with snapshots.delete()",
+      );
+
+    const info = imageInfo(v, ref.ownership);
+    info.reference = structuredClone(ref);
+
+    try {
+      info.nativeDependencies = await dependencies(v, ctx);
+    } catch {
+      /* Unknown dependencies block deletion. */
+    }
+
+    return info;
+  }
+
   async function profiles(target: { sandbox?: Sandbox; create?: CreateInput }, ctx: ReadContext) {
     if (!target.sandbox)
       return {
@@ -612,7 +686,7 @@ export function daytonaState(input: {
   }
 
   function compactDeletionReference(ref: ResourceReference): z.infer<typeof DeleteIdentity> {
-    if (ref.kind !== "snapshot" && ref.kind !== "volume")
+    if (ref.kind !== "snapshot" && ref.kind !== "volume" && ref.kind !== "image")
       throw new AdapterError("INVALID_ARGUMENT", "Artifact deletion kind differs");
 
     const identity: z.infer<typeof DeleteIdentity> = {
@@ -644,8 +718,20 @@ export function daytonaState(input: {
     return true;
   }
 
+  const inspectArtifact = (
+    kind: "snapshot" | "volume" | "image",
+    ref: ResourceReference,
+    ctx: ReadContext,
+  ): Promise<SnapshotInfo | VolumeInfo | ImageInfo> => {
+    if (kind === "snapshot") return inspectSnapshot(ref, ctx, true);
+
+    if (kind === "image") return inspectImage(ref, ctx, true);
+
+    return inspectVolume(ref, ctx);
+  };
+
   const deletion = (
-    kind: "snapshot" | "volume",
+    kind: "snapshot" | "volume" | "image",
   ): NonNullable<AdapterSession["snapshotDelete"]> => ({
     recovery: { version: 1, token: DeleteToken },
     async prepare(ref, ctx) {
@@ -653,18 +739,16 @@ export function daytonaState(input: {
 
       if (ref.kind !== kind) throw new AdapterError("CONFLICT", "Artifact kind differs");
 
-      const info = await (kind === "snapshot"
-        ? inspectSnapshot(ref, ctx, true)
-        : inspectVolume(ref, ctx));
+      const info = await inspectArtifact(kind, ref, ctx);
 
       if (
-        kind === "snapshot" &&
+        kind !== "volume" &&
         "nativeDependencies" in info &&
         (info.nativeDependencies === null || info.nativeDependencies.length)
       )
         throw new AdapterError(
           "CONFLICT",
-          "Snapshot deletion dependencies are present or unverified",
+          `${kind === "image" ? "Image" : "Snapshot"} deletion dependencies are present or unverified`,
         );
 
       return ref;
@@ -674,12 +758,10 @@ export function daytonaState(input: {
       const retained = compactDeletionReference(ref);
       const context = { signal: ctx.signal, deadline: Date.now() + 30000 };
 
-      let info: SnapshotInfo | VolumeInfo;
+      let info: SnapshotInfo | VolumeInfo | ImageInfo;
 
       try {
-        info = await (kind === "snapshot"
-          ? inspectSnapshot(ref, context, true)
-          : inspectVolume(ref, context));
+        info = await inspectArtifact(kind, ref, context);
       } catch (error) {
         if (!ctx.signal.aborted) throw error;
         await ctx.checkpoint({
@@ -704,11 +786,14 @@ export function daytonaState(input: {
       }
 
       if (
-        kind === "snapshot" &&
+        kind !== "volume" &&
         "nativeDependencies" in info &&
         (info.nativeDependencies === null || info.nativeDependencies.length)
       )
-        return ctx.reject("CONFLICT", "Snapshot deletion dependencies are present or unverified");
+        return ctx.reject(
+          "CONFLICT",
+          `${kind === "image" ? "Image" : "Snapshot"} deletion dependencies are present or unverified`,
+        );
 
       await ctx.checkpoint({ reference: retained, accepted: false, stage: "uncertain" });
 
@@ -726,7 +811,7 @@ export function daytonaState(input: {
       try {
         const response = await request(
           "DELETE",
-          `${kind === "snapshot" ? "/snapshots" : "/volumes"}/${encodeURIComponent(ref.nativeId)}`,
+          `${kind === "volume" ? "/volumes" : "/snapshots"}/${encodeURIComponent(ref.nativeId)}`,
           undefined,
           { signal: ctx.signal, deadline: Date.now() + 30000 },
         );
@@ -779,7 +864,7 @@ export function daytonaState(input: {
 
       const response = await request(
         "GET",
-        `${kind === "snapshot" ? "/snapshots" : "/volumes"}/${encodeURIComponent(ref.nativeId)}`,
+        `${kind === "volume" ? "/volumes" : "/snapshots"}/${encodeURIComponent(ref.nativeId)}`,
         undefined,
         ctx,
       );
@@ -788,7 +873,7 @@ export function daytonaState(input: {
 
       if (!response.ok) return ctx.unknown("Deletion is unconfirmed");
 
-      if (kind === "snapshot") {
+      if (kind !== "volume") {
         const native = await json(response, NativeSnapshot);
 
         if (native.id !== ref.nativeId || native.organizationId !== scope.authority.id)
@@ -1693,6 +1778,30 @@ export function daytonaState(input: {
       },
     },
     snapshotDelete: deletion("snapshot"),
+    imageDelete: deletion("image"),
+    imageInspect: (ref, ctx) => inspectImage(ref, ctx),
+    imageListCoverage: "provider-scope",
+    async imageList(page, ctx) {
+      const index = page.cursor ? Number(page.cursor) : 1;
+
+      if (!Number.isSafeInteger(index) || index < 1)
+        throw new AdapterError("INVALID_ARGUMENT", "Invalid image cursor");
+
+      const native = await json(
+        await request("GET", `/snapshots?page=${index}&limit=${page.limit}`, undefined, ctx),
+        z.object({
+          items: z.array(NativeImage).max(page.limit),
+          page: z.number().int(),
+          totalPages: z.number().int(),
+        }),
+      );
+
+      return {
+        items: native.items.map((v) => imageInfo(v)),
+        nextCursor: native.page < native.totalPages ? String(native.page + 1) : undefined,
+        coverage: "provider-scope",
+      };
+    },
     volumeInspect: inspectVolume,
     // Native volume inventory has no pagination: expose a hard bounded page or reject capacity.
     async volumeList(page, ctx) {

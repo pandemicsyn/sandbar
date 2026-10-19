@@ -8,7 +8,13 @@ import {
   SandboxRef,
   type InvocationIdentity,
 } from "@sandbar/provider-spi";
-import { FakeInventoryCursor } from "./protocol";
+import {
+  FAKE_STARTER_IMAGE,
+  FakeImageId,
+  FakeInventoryCursor,
+  type FakeImage,
+  type FakeImageDeleteResult,
+} from "./protocol";
 
 const CommandFixture = z.strictObject({
   command: ExecCommand,
@@ -78,8 +84,21 @@ const ResourceSchema = z.strictObject({
   image: z.string(),
   networkPolicy: z.string(),
   labels: z.record(z.string(), z.string()),
+  /** Sandbox-wide environment; exec fixtures match it merged under per-call env. */
+  env: z.record(z.string(), z.string()).optional(),
   files: z.record(z.string(), FakeFileBytesBase64),
   sequence: z.number().int().nonnegative(),
+});
+
+/** A built image; deleted images stay as tombstones so native IDs are never reused. */
+const ImageSchema = z.strictObject({
+  id: FakeImageId.refine((id) => id !== FAKE_STARTER_IMAGE),
+  scope: NativeScope,
+  source: z.string().min(1).max(1024),
+  submissionId: z.string().min(1).max(128),
+  projectId: z.string().min(1),
+  state: z.enum(["ready", "deleted"]),
+  createdAt: z.iso.datetime(),
 });
 
 const LedgerEntrySchema = z
@@ -148,6 +167,7 @@ const StateSchema = z
     tick: z.number().int().min(0).max(MAX_TICK),
     profile: FakeProfile,
     resources: z.array(ResourceSchema).max(MAX_RESOURCES),
+    images: z.array(ImageSchema).max(MAX_RESOURCES).default([]),
     ledger: z.array(LedgerEntrySchema).max(MAX_LEDGER),
     scenarios: z.array(FakeScenario).max(512),
     events: z.array(FakeEvent).max(512),
@@ -347,6 +367,7 @@ const empty = (): State => ({
     discoveryBySubmission: true,
   },
   resources: [],
+  images: [],
   ledger: [],
   scenarios: [],
   events: [],
@@ -529,6 +550,7 @@ export class FakeProviderEngine {
     image: string;
     networkPolicy: string;
     labels?: Record<string, string>;
+    env?: Record<string, string>;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
 
@@ -574,7 +596,8 @@ export class FakeProviderEngine {
         if (this.state.resources.length >= MAX_RESOURCES)
           return { result: this.rejection("capacity"), loseResponse: false };
         const ref = this.ref(input.scope, "sandbox");
-        this.state.resources.push({
+
+        const resource: z.infer<typeof ResourceSchema> = {
           ref,
           state: "running",
           image: input.image,
@@ -582,7 +605,10 @@ export class FakeProviderEngine {
           labels: input.labels ?? {},
           files: {},
           sequence: 1,
-        });
+        };
+
+        if (input.env && Object.keys(input.env).length) resource.env = { ...input.env };
+        this.state.resources.push(resource);
 
         const result: z.infer<typeof DriverResult> = {
           status: "completed",
@@ -618,6 +644,138 @@ export class FakeProviderEngine {
       },
       () => ({ result: this.rejection("capacity"), loseResponse: false }),
     );
+  }
+  private imageView(image: z.infer<typeof ImageSchema>): FakeImage {
+    return {
+      id: image.id,
+      state: "ready",
+      visibility: "private",
+      source: image.source,
+      submissionId: image.submissionId,
+      createdAt: image.createdAt,
+    };
+  }
+  /** Ready images this scope may start from, including the borrowed public starter image. */
+  image(scope: NativeScope, query: { imageId?: string; submissionId?: string }): FakeImage | null {
+    if (query.imageId === FAKE_STARTER_IMAGE && query.submissionId === undefined)
+      return {
+        id: FAKE_STARTER_IMAGE,
+        state: "ready",
+        visibility: "public",
+        source: null,
+        submissionId: null,
+        createdAt: null,
+      };
+
+    const found = this.state.images.find(
+      (image) =>
+        sameScope(image.scope, scope) &&
+        image.state === "ready" &&
+        (query.imageId === undefined || image.id === query.imageId) &&
+        (query.submissionId === undefined || image.submissionId === query.submissionId),
+    );
+
+    return found && (query.imageId ?? query.submissionId) ? this.imageView(found) : null;
+  }
+  images(scope: NativeScope, cursor: string | undefined, limit: number) {
+    const all = [
+      this.image(scope, { imageId: FAKE_STARTER_IMAGE })!,
+      ...this.state.images
+        .filter((image) => sameScope(image.scope, scope) && image.state === "ready")
+        .map((image) => this.imageView(image)),
+    ];
+
+    const start = Number(cursor ?? 0);
+    const items = all.slice(start, start + limit);
+
+    return start + limit < all.length ? { items, nextCursor: String(start + limit) } : { items };
+  }
+  /** One build per submission: a repeated submission returns the original image, never another. */
+  async buildImage(input: {
+    scope: NativeScope;
+    identity: InvocationIdentity;
+    source: string;
+  }): Promise<{ image: FakeImage | null; created: boolean; loseResponse: boolean }> {
+    return this.mutate(
+      () => {
+        const prior = this.state.images.find(
+          (image) =>
+            sameScope(image.scope, input.scope) &&
+            image.submissionId === input.identity.submissionId,
+        );
+
+        if (prior)
+          return {
+            image:
+              prior.projectId === input.identity.projectId && prior.state === "ready"
+                ? this.imageView(prior)
+                : null,
+            created: false,
+            loseResponse: false,
+          };
+
+        if (this.state.images.length >= MAX_RESOURCES || this.state.tick >= MAX_TICK)
+          throw new FakeCapacityError("Fake image limit reached");
+
+        const image: z.infer<typeof ImageSchema> = {
+          id: `fake-image-${this.state.images.length + 1}`,
+          scope: input.scope,
+          source: input.source,
+          submissionId: input.identity.submissionId,
+          projectId: input.identity.projectId,
+          state: "ready",
+          createdAt: iso(this.state.tick++),
+        };
+
+        this.state.images.push(image);
+
+        return {
+          image: this.imageView(image),
+          created: true,
+          loseResponse: input.source.startsWith("lost/"),
+        };
+      },
+      () => ({ image: null, created: false, loseResponse: false }),
+    );
+  }
+  /** Delete one built image; the public starter image and images in use are never deleted. */
+  async deleteImage(input: {
+    scope: NativeScope;
+    identity: InvocationIdentity;
+    imageId: string;
+  }): Promise<{ result: FakeImageDeleteResult; loseResponse: boolean }> {
+    return this.mutate(() => {
+      const imageId = input.imageId;
+
+      if (imageId === FAKE_STARTER_IMAGE)
+        return { result: { status: "rejected", imageId, reason: "public" }, loseResponse: false };
+
+      const image = this.state.images.find(
+        (candidate) =>
+          sameScope(candidate.scope, input.scope) &&
+          candidate.id === imageId &&
+          candidate.state === "ready",
+      );
+
+      if (!image) return { result: { status: "not_found", imageId }, loseResponse: false };
+
+      if (
+        this.state.resources.some(
+          (resource) =>
+            resource.state === "running" &&
+            resource.image === imageId &&
+            sameScope(resource.ref.scope, input.scope),
+        )
+      )
+        return { result: { status: "rejected", imageId, reason: "in_use" }, loseResponse: false };
+
+      image.state = "deleted";
+
+      return {
+        result: { status: "deleted", imageId },
+        loseResponse: image.source.startsWith("lost/"),
+      };
+    });
   }
   async exec(input: {
     sandbox: SandboxRef;
@@ -690,7 +848,7 @@ export class FakeProviderEngine {
           !fixture ||
           canonicalJson(fixture.command) !== canonicalJson(input.command) ||
           fixture.cwd !== input.cwd ||
-          canonicalJson(fixture.env ?? {}) !== canonicalJson(input.env ?? {}) ||
+          canonicalJson(fixture.env ?? {}) !== canonicalJson({ ...resource.env, ...input.env }) ||
           (fixture.deadlineSeconds !== undefined &&
             fixture.deadlineSeconds !== input.deadlineSeconds)
         )

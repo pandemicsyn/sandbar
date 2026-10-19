@@ -49,7 +49,15 @@ export type RetainedArtifact = {
   cleanup: "manual" | "provider_expiry" | "none_known";
 };
 
-export type ImageBuildValue = { preparedId: string; retainedResources: RetainedArtifact[] };
+export type ImageBuildValue = {
+  preparedId: string;
+  retainedResources: RetainedArtifact[];
+  /**
+   * The built image as a scoped `image` reference whose native ID is `preparedId`. Use
+   * `verified-created` ownership only when native evidence proves this attempt created it.
+   */
+  image?: ResourceReference;
+};
 
 export * from "./resources";
 
@@ -64,6 +72,12 @@ export type CreateInput = {
   labels?: Record<string, string>;
   requirements?: { snapshot: SnapshotRequest };
   mounts?: import("./resources").MountSpec[];
+  /**
+   * Sandbox-wide environment for every command, process and terminal; a per-call `env`
+   * entry overrides the same key. Values may be secrets: never persist them in recovery
+   * tokens or include them in messages. Requires `supports.createEnv`.
+   */
+  env?: Record<string, string>;
 };
 
 export type CreateValue = {
@@ -315,6 +329,11 @@ export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
   network: readonly string[];
   exec?: { commands: readonly C[]; maxOutputBytes: number };
   fileWrite?: { overwrite: boolean; noClobber: boolean };
+  /**
+   * Create-time `env` is applied natively (or durably re-read) for every command, process
+   * and terminal, including after reopen in another process. Absent rejects create `env`.
+   */
+  createEnv?: boolean;
 };
 
 export type AdapterSession<
@@ -386,6 +405,21 @@ export type AdapterSession<
     ctx: ReadContext,
   ) => Promise<{
     items: import("./resources").SnapshotInfo[];
+    nextCursor?: string;
+    coverage: "provider-scope" | "sandbar-managed";
+  }>;
+  imageDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
+  imageInspect?: (
+    ref: ResourceReference,
+    ctx: ReadContext,
+  ) => Promise<import("./resources").ImageInfo>;
+  /** Inventory coverage established by this adapter; omit when unknown. */
+  imageListCoverage?: "provider-scope" | "sandbar-managed";
+  imageList?: (
+    input: import("./resources").InventoryInput,
+    ctx: ReadContext,
+  ) => Promise<{
+    items: import("./resources").ImageInfo[];
     nextCursor?: string;
     coverage: "provider-scope" | "sandbar-managed";
   }>;
@@ -515,6 +549,11 @@ export type AdapterSession<
     items: { id: string; state: "running" | "destroyed" | "unknown" }[];
     nextCursor?: string;
   }>;
+  /** Bounded sandbox listing with reopenable references; backs `sandboxes.list()`. */
+  sandboxList?: (
+    input: import("./resources").InventoryInput,
+    ctx: ReadContext,
+  ) => Promise<import("./state").SandboxListPage>;
 };
 
 export type AdapterDefinition<C extends z.ZodType, K extends z.ZodType, S = AdapterSession> = {

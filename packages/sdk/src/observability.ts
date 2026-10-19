@@ -203,6 +203,7 @@ const operationKinds = new Set([
   "file_mkdir",
   "file_remove",
   "image_build",
+  "image_delete",
   "snapshot_capture",
   "snapshot_restore",
   "snapshot_delete",

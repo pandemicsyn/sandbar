@@ -1004,7 +1004,16 @@ test("lost OCI build response observes the retained template without submitting 
 
     expect(observedBuild).toMatchObject({
       kind: "completed",
-      value: { preparedId: "retained_template" },
+      value: {
+        preparedId: "retained_template",
+        // A build found by name after a lost response never claims verified ownership.
+        image: {
+          kind: "image",
+          nativeId: "retained_template",
+          generation: "build_one",
+          ownership: "unknown",
+        },
+      },
     });
     expect(creates).toBe(0);
   } finally {
@@ -1094,6 +1103,15 @@ test("shared image build returns a scoped prepared handle for one native create"
         cleanup: "manual",
       },
     ]);
+    expect(built.reference).toEqual({
+      version: 1,
+      kind: "image",
+      provider: "e2b",
+      scope: client.scope,
+      nativeId: "built_template",
+      generation: "build_one",
+      ownership: "verified-created",
+    });
     expect(creates).toBe(0);
 
     await expect(

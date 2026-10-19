@@ -1,5 +1,6 @@
 import { appendFile } from "node:fs/promises";
 import { bindAdapter, defineAdapter } from "@sandbar-sdk/adapter";
+import { AdapterImage } from "sandbar-sdk";
 import { createFakeAdapter } from "@sandbar/provider-fake";
 import { z } from "zod";
 
@@ -27,23 +28,76 @@ export const guarded = defineAdapter({
   },
 });
 
+/** The fake adapter without create-time env, like a provider that cannot guarantee it. */
+export const withoutCreateEnv = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider without create env",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const session = await definition.connect({ config: {}, credentials: {}, host });
+
+      return { ...session, supports: { ...session.supports, createEnv: false } };
+    },
+  }),
+  {},
+  {},
+);
+
+/** The fake adapter without image inspection, inventory or deletion, like boxd or Vercel. */
+export const plain = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider without image management",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const {
+        imageInspect: _inspect,
+        imageList: _list,
+        imageListCoverage: _coverage,
+        imageDelete: _delete,
+        ...session
+      } = await definition.connect({ config: {}, credentials: {}, host });
+
+      return session;
+    },
+  }),
+  {},
+  {},
+);
+
 const builds = process.env.SANDBAR_FAKE_BUILDS;
 
-const built = {
-  preparedId: "fake-starter",
-  retainedResources: [
-    {
-      kind: "fake-image",
-      id: "fake-starter",
-      ownership: "verified" as const,
-      cleanup: "manual" as const,
+const building = createFakeAdapter({ url, token, imageBuild: true });
+
+/** The fake session with its simulated image build; SANDBAR_FAKE_BUILDS logs every build. */
+async function buildingSession(host: Parameters<typeof building.connect>[0]["host"]) {
+  const session = await building.connect({ config: {}, credentials: {}, host });
+  const build = session.imageBuild;
+
+  if (!build || !("submit" in build)) throw new Error("The fake must build images");
+
+  return {
+    ...session,
+    imageBuild: {
+      ...build,
+      async submit(
+        input: Parameters<typeof build.submit>[0],
+        ctx: Parameters<typeof build.submit>[1],
+      ) {
+        if (builds) await appendFile(builds, `${input.source.value}\n`);
+
+        return build.submit(input, ctx);
+      },
     },
-  ],
-};
+  };
+}
 
 /**
- * The fake adapter with an image build, standing in for build-first providers such as E2B. Every
- * build lands on fake-starter; a `lost/` reference loses the build's response.
+ * The fake adapter with its simulated image build, standing in for build-first providers such as
+ * E2B. Each build is a new fake image; a `lost/` reference loses the build and delete responses.
  */
 export const builder = bindAdapter(
   defineAdapter({
@@ -51,24 +105,47 @@ export const builder = bindAdapter(
     displayName: "Fake test provider that builds images",
     config: z.strictObject({}),
     credentials: z.strictObject({}),
+    connect: ({ host }) => buildingSession(host),
+  }),
+  {},
+  {},
+);
+
+/**
+ * A builder whose image delete fails outside the SDK's operation tracking, so the outcome is
+ * unknown and no operation reference exists to observe. Connecting patches this process's SDK.
+ */
+export const unobservableDelete = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider whose image deletes cannot be observed",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
     async connect({ host }) {
-      const session = await definition.connect({ config: {}, credentials: {}, host });
+      AdapterImage.prototype.delete = async () => {
+        throw new Error("Fake image delete failed without an operation reference");
+      };
+
+      return buildingSession(host);
+    },
+  }),
+  {},
+  {},
+);
+
+/** The builder connected to another account, so references saved by `builder` do not match it. */
+export const otherAccount = bindAdapter(
+  defineAdapter({
+    name: "fake",
+    displayName: "Fake test provider in another account",
+    config: z.strictObject({}),
+    credentials: z.strictObject({}),
+    async connect({ host }) {
+      const session = await buildingSession(host);
 
       return {
         ...session,
-        imageBuild: {
-          async submit(input, ctx) {
-            if (builds) await appendFile(builds, `${input.source.value}\n`);
-
-            if (input.source.value.startsWith("lost/"))
-              return ctx.unknown("The fake lost the build response");
-
-            return built;
-          },
-          async observe() {
-            return built;
-          },
-        },
+        scope: { ...session.scope, authority: { kind: "fixture", id: "other" } },
       };
     },
   }),

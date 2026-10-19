@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { e2bState } from "./state-native";
+import { e2bImages } from "./images-native";
 import {
   SandboxInfoSchema,
   LifecycleInput,
@@ -528,6 +529,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         partition: { endpoint: E2B_ENDPOINT, template: config.templateId },
       };
 
+      const images = e2bImages({ scope: boundScope, transport, teamId: config.teamId });
+
       const resources = e2bState({
         scope: boundScope,
         transport,
@@ -721,6 +724,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
       return {
         ...resources.fields,
+        ...images.fields,
         defaultImage: { kind: "prepared", value: config.templateId },
         defaultNetworkPolicy: config.networkPolicy,
         scope: {
@@ -772,6 +776,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           network: ["internet", "blocked"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         imageBuild: {
           async prepare(input) {
@@ -819,6 +824,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     cleanup: "manual" as const,
                   },
                 ],
+                // This attempt's own build call returned the template and build identity.
+                image: images.reference(build.templateId, "verified-created", build.buildId),
               };
             } catch {
               return ctx.unknown(`E2B image build ${name} outcome unavailable; observe only`);
@@ -843,6 +850,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   cleanup: "manual" as const,
                 },
               ],
+              // Discovered by build name rather than acknowledged, so ownership stays unknown.
+              image: images.reference(build.templateId, "unknown", build.buildId),
             };
           },
         },
@@ -949,14 +958,17 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               if (name) Object.assign(metadata, { sandbar_build: name });
 
-              const id = await transport.create({
+              const request: Parameters<E2BTransport["create"]>[0] = {
                 templateId,
                 timeoutMs: config.timeoutSeconds * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
                 allowPublicTraffic: token.allowPublicTraffic,
                 metadata,
                 signal: ctx.signal,
-              });
+              };
+
+              if (input.env) request.env = input.env;
+              const id = await transport.create(request);
 
               if (!nativeId.test(id)) return ctx.unknown("E2B create returned an invalid ID");
               token.sandboxId = id;
@@ -1739,6 +1751,34 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           }));
 
           return { items, nextCursor: page.nextToken };
+        },
+        async sandboxList(input) {
+          await verifyAuthority();
+
+          const page = await transport.list(
+            { sandbar_scope: scopeMarker },
+            input.limit,
+            input.cursor,
+          );
+
+          return {
+            // Only sandboxes carrying this binding's Sandbar creation markers are listed.
+            coverage: "sandbar-managed" as const,
+            items: page.items.filter(owned).map((record) => ({
+              id: record.id,
+              state:
+                record.state === "running"
+                  ? ("running" as const)
+                  : record.state === "paused"
+                    ? ("suspended" as const)
+                    : ("unknown" as const),
+              reference: sandboxReference("e2b", boundScope, record.id, {
+                operation: record.metadata.sandbar_operation!,
+                submission: record.metadata.sandbar_submission!,
+              }),
+            })),
+            nextCursor: page.nextToken,
+          };
         },
         processes: transport.startText
           ? {

@@ -22,7 +22,7 @@ type Candidate = { value: string; description?: string };
 
 type Completion = { candidates: Candidate[]; directive: number };
 
-const fileFlags = new Set(["config", "state-dir", "stdin-file"]);
+const fileFlags = new Set(["config", "state-dir", "stdin-file", "env-file"]);
 
 /** Commands whose positional arguments name sandboxes, and how many. */
 const sandboxArguments = new Map([
@@ -153,7 +153,7 @@ export async function complete(
     if (positionals.length === 0)
       return { candidates: imageActions.map((action) => ({ value: action })), directive: 0 };
 
-    if (positionals.length === 1 && (positionals[0] === "inspect" || positionals[0] === "forget")) {
+    if (positionals.length === 1 && ["inspect", "forget", "rm"].includes(positionals[0]!)) {
       const entries = await listAll(await session.store(), "image");
 
       return {

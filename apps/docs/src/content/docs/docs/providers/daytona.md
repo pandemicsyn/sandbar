@@ -54,6 +54,8 @@ Set `DAYTONA_API_KEY` before running this on the server. The snapshot must be ac
 
 `create()`, `create({ labels: { job: "report" } })`, `checkCreate()` and `submitCreate()` use the configured environment. Without one, pass `create({ environment: Image.prepared("your-snapshot") })`; missing both rejects with `INVALID_ARGUMENT` before creation. Scoped prepared images retain scope checks. An invalid override never falls back or triggers an unrequested build. Default-creation live acceptance remains unrun.
 
+`create({ env })` sends the variables as the native sandbox `env` in the single create request, so they apply to every command and process, including after reopening; per-call `env` overrides a name. Values are not saved in recovery references and are redacted from Daytona's error text. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables). Live acceptance remains unrun.
+
 ## Choose the policy deliberately
 
 `internet` requests unrestricted egress and needs an organization without limited sandbox egress; otherwise creation rejects before allocation with no fallback. `daytona-default` preserves Daytona's organization-managed restrictions, including essential-service access. Configure it once on the connection; omitted create and restore policies use that value. Per-call policies must match this connection’s policy; open a separately configured connection to change it. It does not promise unrestricted internet or strict blocked egress.
@@ -67,6 +69,8 @@ The policy is part of connection scope. Earlier releases defaulted to `blocked`;
 Commands support argv and POSIX shell. Binary output capture requires `/bin/sh`, `mktemp`, `mkfifo`, `cat`, `wc`, `head`, `od`, and `rm`. File staging and receipts also need `mkdir`, `rmdir`, `mv`, and compatible copy/link utilities. Atomic no-clobber requires `ln -T` and hard-link support.
 
 The live baseline uses the prepared `daytona-small` workflow in `us`; it does not qualify arbitrary snapshots. Explicit OCI builds are implemented but need separate live evidence and cleanup for retained snapshots. See [Images and networking](/docs/guides/images-and-networking/).
+
+`images.get()`, `images.list()` and `images.delete()` treat native Daytona snapshots as images. The list covers the organization's snapshots (`provider-scope`), including general ones, which are reported as `public`; its items have unknown ownership. Delete refuses general snapshots, snapshots from another organization, and snapshots captured from a sandbox (use `snapshots.delete()` for those). Like snapshot deletion, it also refuses when an organization warm pool uses the snapshot or warm pools cannot be read, because native deletion cascades to them. Delete sends one native `DELETE` and never resends it; a lost response is `OUTCOME_UNKNOWN` until the snapshot is observed absent. These rules have deterministic native-boundary coverage only; no live image deletion has run.
 
 ## Everyday filesystem and transfers
 
@@ -132,6 +136,8 @@ Mounted volumes are object-backed rather than POSIX filesystems. `writeFile(...,
 Persist `sandbox.reference` from create, restore or recovered results, then use `freshClient.sandboxes.get(savedReference)` to reopen the same native compute. `inspect()` reports fresh state, native state, local observation time and available deadline/policy facts. Reopening never creates, resumes or extends lifetime; inactive compute remains inactive and guest calls require running state. Unknown expiry is not unlimited lifetime, and elapsed expiry does not prove deletion. Native absence, forbidden access, unavailable reads and identity/configuration conflict remain distinct errors.
 
 References contain no credentials or historical observations. Configure current credentials with the original native binding. Applications own trusted persistence and the crash window before saving. Legacy adapters and failed optional native identity reads may leave `reference` null; inspect again for verified identity rather than fabricating a locator from `id`. See the [compiled reopening example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-reopen.ts). This slice has deterministic/packed coverage; its fresh-process `lifecycle-reopen` case passed at `3188e33` in us with confirmed owned cleanup, for the recorded configuration. Configured renewal is available; native suspension/resumption are available on eligible unmounted compute.
+
+`sandboxes.list()` reports `coverage: "sandbar-managed"`: it lists only sandboxes in the configured organization and target that carry Sandbar submission labels, confirmed by one native detail read per candidate. Listed references are `verified-created` and reopen with `get()`. A sandbox missing its operation label is listed with `reference: null`. Pages can hold fewer items than `limit` because filtering happens after the native page read. This listing has deterministic fixture coverage only.
 
 Daytona validates organization, region, endpoint, toolbox origin, native network policy and private visibility. `autoDestroyAt` remains a sandbox-wide expiry while stopped/archived. Idle-stop and deletion-after-stop intervals are separate observed policies. A rotated key in the same organization works with the same binding.
 

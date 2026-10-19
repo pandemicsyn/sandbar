@@ -38,7 +38,7 @@ The adapter uses these defaults:
 - **New volumes:** 10 GiB each. Set `volumes.sizeBytes` from 1 GiB to 1 TiB, subject to your quota.
 - **Preview access:** public on port 3000. Create pins a public route and disables browser protection. See [Public previews](#public-previews).
 
-You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported.
+You must set `network: "internet"` when connecting. Ordinary sandbox creation uses that setting. Requests for blocked internet access fail before a machine is allocated. boxd isolates machines from peers and metadata services, but **internet access remains enabled**. Region and label overrides are unsupported. Create-time `env` is unsupported: boxd's machine `env` is not established to reach exec sessions, so `create({ env })` rejects with `UnsupportedFeatureError` before allocation and `capabilities().createEnv` is `false`. Pass variables per call with `exec({ env })`; see [environment variables](/docs/guides/images-and-networking/#set-environment-variables).
 
 ## Adapter support
 
@@ -46,7 +46,7 @@ Implemented features have deterministic native-boundary coverage. The four basel
 
 | Feature                                                 | Support                                                                                                                                                  |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compute lifecycle                                       | Create, metadata inspection, inventory, reference reopening and confirmed destruction.                                                                   |
+| Compute lifecycle                                       | Create, metadata inspection, inventory and listing, reference reopening and confirmed destruction.                                                       |
 | Commands                                                | Buffered argv/shell with cwd/env; exact stdout/stderr bytes, combined bounded capture up to 1 MiB; finite byte stdin up to 1 MiB followed by native EOF. |
 | Files                                                   | Binary read/overwrite write up to 1 MiB; actual upload byte-count acknowledgement. Default exclusive-create no-clobber helper.                           |
 | Directory operations                                    | Complete bounded directory browsing, stat/exists and recursive-opt-in mkdir/remove.                                                                      |
@@ -57,6 +57,7 @@ Implemented features have deterministic native-boundary coverage. The four basel
 | Other filesystem operations                             | Python 3 regular-file copy, same-filesystem move, staged write and incremental read streams; walk/text lines compose these hooks.                        |
 | Public previews                                         | Default public setup; read-only lookup of pinned configured ports on running compute.                                                                    |
 | Strict blocked egress, protected previews, image builds | Unsupported. OCI boot does not allocate an image-build artifact.                                                                                         |
+| Image get, list and delete                              | Unsupported: boxd boots OCI images directly and has no provider-side image resource to manage. `images.*` reject with `UNSUPPORTED`.                     |
 
 ## Files and streams
 

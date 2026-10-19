@@ -90,6 +90,9 @@ import {
   AdapterVolume,
   resourceManagers,
   decodeCapture,
+  listSandboxes,
+  type SandboxList,
+  type SandboxListInput,
   type SnapshotResult,
   type WaitOptions,
 } from "./resources";
@@ -183,7 +186,9 @@ function sealedReference(value: RecoveryReference): RecoveryReference {
     copy.kind,
   );
 
-  const artifactOperation = ["snapshot_delete", "volume_delete"].includes(copy.kind);
+  const artifactOperation = ["snapshot_delete", "volume_delete", "image_delete"].includes(
+    copy.kind,
+  );
 
   const boundSandbox =
     (createsResource || artifactOperation ? !copy.sandboxId : !!copy.sandboxId) &&
@@ -196,7 +201,9 @@ function sealedReference(value: RecoveryReference): RecoveryReference {
     ? copy.resource?.kind === "snapshot"
     : copy.kind === "volume_delete"
       ? copy.resource?.kind === "volume"
-      : !copy.resource;
+      : copy.kind === "image_delete"
+        ? copy.resource?.kind === "image"
+        : !copy.resource;
 
   const boundLifecycle =
     ["sandbox_suspend", "sandbox_resume"].includes(copy.kind) === !!copy.lifecycle &&
@@ -225,7 +232,9 @@ function assertRecoveryResourceKind(kind: string, resource?: ResourceReference):
     ? "snapshot"
     : kind === "volume_delete"
       ? "volume"
-      : null;
+      : kind === "image_delete"
+        ? "image"
+        : null;
 
   if (expected && resource?.kind !== expected)
     throw new SandbarError("INVALID_ARGUMENT", "Recovery resource kind differs from operation");
@@ -293,6 +302,20 @@ function acknowledgedLifecycleOutcome(
   });
 
   return value.success ? value.data : undefined;
+}
+
+/** Derive legacy inventory items from a listing when an adapter only implements `sandboxList`. */
+async function inventoryFromList(page: Promise<import("@sandbar-sdk/adapter").SandboxListPage>) {
+  const { items, nextCursor } = await page;
+
+  return {
+    items: items.map((item) => ({
+      id: item.id,
+      state:
+        item.state === "running" || item.state === "destroyed" ? item.state : ("unknown" as const),
+    })),
+    nextCursor,
+  };
 }
 
 function unsupported(feature: string): never {
@@ -385,7 +408,7 @@ export type RecoveredOperation =
   | OperationHandle<RenewResult, "sandbox_renew">
   | OperationHandle<SnapshotResult, "snapshot_capture">
   | OperationHandle<VolumeHandle, "volume_create">
-  | OperationHandle<ArtifactDeletionResult, "snapshot_delete" | "volume_delete">
+  | OperationHandle<ArtifactDeletionResult, "snapshot_delete" | "volume_delete" | "image_delete">
   | OperationHandle<ImageBuildResult, "image_build">
   | OperationHandle<ExecOutput, "exec">
   | OperationHandle<DestroyValue, "destroy">
@@ -1953,7 +1976,7 @@ export class PreparedAdapterAttempt {
               ),
               submissionWaitSignal,
               this.client.signal,
-              this.kind === "snapshot_delete" || this.kind === "volume_delete",
+              ["snapshot_delete", "volume_delete", "image_delete"].includes(this.kind),
             ),
           {
             phase: true,
@@ -1965,7 +1988,7 @@ export class PreparedAdapterAttempt {
         ),
         submissionWaitSignal,
         this.client.signal,
-        this.kind === "snapshot_delete" || this.kind === "volume_delete",
+        ["snapshot_delete", "volume_delete", "image_delete"].includes(this.kind),
       );
     } catch (error) {
       if (error instanceof AdapterCheckpointError && error.outcome) throw error;
@@ -2017,6 +2040,8 @@ export class AdapterDirectClient {
       options?: SandboxScopeOptions,
     ) => Promise<T>;
     get: (reference: SandboxReference, options?: WaitOptions) => Promise<SandboxHandle<true>>;
+    /** List a bounded page of sandboxes; listed references reopen with `get`. */
+    list: (input?: SandboxListInput) => Promise<SandboxList>;
     checkCreate: (input?: CreateInput) => Promise<Support<CreatePlan>>;
     create: (
       input?: CreateInput,
@@ -2029,7 +2054,7 @@ export class AdapterDirectClient {
   };
   readonly snapshots: ReturnType<typeof resourceManagers>["snapshots"];
   readonly volumes: ReturnType<typeof resourceManagers>["volumes"];
-  readonly images: {
+  readonly images: ReturnType<typeof resourceManagers>["images"] & {
     build: (
       input: ImageBuildInput,
       options?: { signal?: AbortSignal },
@@ -2058,7 +2083,7 @@ export class AdapterDirectClient {
       inventory: async (input) => {
         this.ensureOpen();
 
-        if (!this.session.inventory) unsupported("inventory");
+        if (!this.session.inventory && !this.session.sandboxList) unsupported("inventory");
 
         const checked = z
           .strictObject({
@@ -2067,12 +2092,13 @@ export class AdapterDirectClient {
           })
           .parse(input);
 
+        const ctx = { signal: this.signal, deadline: Date.now() + 30_000 };
+
         const result = await readWhileOpen(
           this,
-          this.session.inventory(checked, {
-            signal: this.signal,
-            deadline: Date.now() + 30_000,
-          }),
+          this.session.inventory
+            ? this.session.inventory(checked, ctx)
+            : inventoryFromList(this.session.sandboxList!(checked, ctx)),
         );
 
         return z
@@ -2119,7 +2145,7 @@ export class AdapterDirectClient {
             scope: this.scope,
           });
 
-        if ("kind" in input && ["snapshot", "volume"].includes(input.kind))
+        if ("kind" in input && ["snapshot", "volume", "image"].includes(input.kind))
           assertResourceScope(ResourceReference.parse(input), {
             provider: this.provider,
             scope: this.scope,
@@ -2167,6 +2193,7 @@ export class AdapterDirectClient {
               "file_mkdir",
               "file_remove",
               "image_build",
+              "image_delete",
               "sandbox_suspend",
               "sandbox_resume",
               "sandbox_renew",
@@ -2229,6 +2256,7 @@ export class AdapterDirectClient {
             "snapshot_restore",
             "snapshot_delete",
             "volume_delete",
+            "image_delete",
           ].includes(checked.kind) &&
             checked.sandboxId) ||
           ([
@@ -2243,7 +2271,9 @@ export class AdapterDirectClient {
             "sandbox_renew",
           ].includes(checked.kind) &&
             !checked.sandboxId) ||
-          (["snapshot_restore", "snapshot_delete", "volume_delete"].includes(checked.kind) &&
+          (["snapshot_restore", "snapshot_delete", "volume_delete", "image_delete"].includes(
+            checked.kind,
+          ) &&
             !checked.resource)
         )
           throw new SandbarError("INVALID_ARGUMENT", "Observation sandbox binding is invalid");
@@ -2302,12 +2332,14 @@ export class AdapterDirectClient {
     this.sandboxes = {
       with: (input, callback, options) => withSandbox(this, input, callback, options),
       get: (reference, options = {}) => this.reopenSandbox(reference, options),
+      list: (input) => listSandboxes(this, input),
       checkCreate: (input) => this.checkCreate(input),
       create: async (input, options = {}) =>
         waitFor(this.telemetry, await internalMethod(this.submitCreate)(input, options), options),
       submitCreate: (input, options = {}) => this.submitCreate(input, options),
     };
     this.images = {
+      ...managers.images,
       build: async (input, options = {}) =>
         waitFor(this.telemetry, await internalMethod(this.submitBuild)(input, options), options),
       submitBuild: (input, options = {}) => this.submitBuild(input, options),
@@ -2329,6 +2361,7 @@ export class AdapterDirectClient {
     });
     instrument(this.images, "build", this.telemetry, "sandbar.image.build", { effect: "applied" });
     instrument(this.operations, "inventory", this.telemetry, "sandbar.sandbox.inventory");
+    instrument(this.sandboxes, "list", this.telemetry, "sandbar.sandbox.list");
     instrument(this.operations, "prepare", this.telemetry, "sandbar.prepare", { phase: true });
     instrument(this.operations, "observe", this.telemetry, "sandbar.observe", { phase: true });
   }
@@ -2373,10 +2406,11 @@ export class AdapterDirectClient {
       commands: [...(support.exec?.commands ?? [])],
       images: [...support.images],
       imageBuild: !!this.session.imageBuild,
+      createEnv: !!support.createEnv,
       network: [...support.network],
       exec: !!this.session.exec && !!support.exec,
       inspect: !!this.session.inspect,
-      inventory: !!this.session.inventory,
+      inventory: !!this.session.inventory || !!this.session.sandboxList,
       readFile: !!this.session.files?.read,
       writeFile: !!this.session.files?.write,
       maxOutputBytes: support.exec?.maxOutputBytes ?? 0,
@@ -2426,6 +2460,7 @@ export class AdapterDirectClient {
           labels: request.labels,
           requirements: request.requirements,
           mounts: request.mounts,
+          env: request.env,
         },
         { signal, deadline: Date.now() + 30_000 },
       ),
@@ -2490,6 +2525,7 @@ export class AdapterDirectClient {
         labels: request.labels,
         requirements: request.requirements,
         mounts: request.mounts,
+        env: request.env,
       },
       (result, ref) => {
         if (result.kind !== "completed" || !("id" in result.value)) throw asUnknown(ref);
@@ -2570,18 +2606,47 @@ export class AdapterDirectClient {
       (result, ref) => {
         if (result.kind !== "completed" || !("preparedId" in result.value)) throw asUnknown(ref);
 
-        return {
-          prepared: {
-            kind: "prepared",
-            value: result.value.preparedId,
-            provider: this.provider,
-            scope: structuredClone(this.scope),
-          },
-          retainedResources: result.value.retainedResources,
-        };
+        return this.builtImage(result.value, ref);
       },
       options,
     );
+  }
+  /** Decode a confirmed build; a missing adapter reference is never promoted to verified. */
+  private builtImage(
+    value: import("@sandbar-sdk/adapter").ImageBuildValue,
+    ref: RecoveryReference,
+  ): ImageBuildResult {
+    // The runtime parsed adapter references with a literal "image" kind.
+    const reference: ResourceReference<"image"> = value.image
+      ? { ...structuredClone(value.image), kind: "image" }
+      : {
+          version: 1,
+          kind: "image",
+          provider: this.provider,
+          scope: structuredClone(this.scope),
+          nativeId: value.preparedId,
+          ownership: "unknown",
+        };
+
+    try {
+      assertResourceScope(reference, { provider: this.provider, scope: this.scope });
+    } catch {
+      throw asUnknown(ref, "Built image reference differs from the verified connection");
+    }
+
+    if (reference.nativeId !== value.preparedId)
+      throw asUnknown(ref, "Built image reference differs from the prepared image");
+
+    return {
+      prepared: {
+        kind: "prepared",
+        value: value.preparedId,
+        provider: this.provider,
+        scope: structuredClone(this.scope),
+      },
+      retainedResources: value.retainedResources,
+      reference: freezeReference(reference),
+    };
   }
   async submit<T, K extends OperationKind = OperationKind>(
     kind: K,
@@ -2656,7 +2721,7 @@ export class AdapterDirectClient {
           }),
         kind === "snapshot_capture" ? this.signal : waiting,
         this.signal,
-        kind === "snapshot_delete" || kind === "volume_delete",
+        ["snapshot_delete", "volume_delete", "image_delete"].includes(kind),
       );
 
       if (first.kind === "pending") {
@@ -2846,7 +2911,9 @@ export class AdapterDirectClient {
       throw new SandbarError("FORBIDDEN", "Recovery scope does not match the verified connection");
 
     if (
-      ["snapshot_restore", "snapshot_delete", "volume_delete"].includes(reference.kind) &&
+      ["snapshot_restore", "snapshot_delete", "volume_delete", "image_delete"].includes(
+        reference.kind,
+      ) &&
       !reference.resource
     )
       throw new SandbarError("INVALID_ARGUMENT", "Recovery resource is missing");
@@ -2891,6 +2958,7 @@ export class AdapterDirectClient {
         "snapshot_restore",
         "snapshot_delete",
         "volume_delete",
+        "image_delete",
       ].includes(reference.kind) &&
       reference.sandboxId
     )
@@ -2964,6 +3032,7 @@ export class AdapterDirectClient {
         );
       case "snapshot_delete":
       case "volume_delete":
+      case "image_delete":
         return new AdapterOperation(
           this,
           reference,
@@ -3001,15 +3070,7 @@ export class AdapterDirectClient {
 
             if (!("preparedId" in value)) throw asUnknown(ref);
 
-            return {
-              prepared: {
-                kind: "prepared" as const,
-                value: value.preparedId,
-                provider: this.provider,
-                scope: structuredClone(this.scope),
-              },
-              retainedResources: value.retainedResources,
-            };
+            return this.builtImage(value, ref);
           },
           undefined,
           "image_build",

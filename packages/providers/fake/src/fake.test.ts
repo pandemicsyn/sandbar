@@ -984,6 +984,51 @@ describe("independent fake provider", () => {
     expect((await control("/_test/state")).resources).toHaveLength(2);
   });
 
+  test("create env is kept with the fake sandbox and per-call env overrides it", async () => {
+    const { driver, control } = await setup();
+
+    const created = await driver.create({
+      scope,
+      identity: identity("env_create"),
+      image: "fake-starter",
+      networkPolicy: "blocked",
+      env: { LANG: "C", TOKEN: "fixture-token" },
+    });
+
+    if (created.status !== "completed" || created.value.kind !== "sandbox")
+      throw new Error("Create failed");
+    const sandbox = created.value.observation.ref;
+
+    for (const submissionId of ["env_inherited", "env_overridden"])
+      await control("/_test/seed", {
+        submissionId,
+        action: "exec",
+        command: { command, env: { LANG: "C.UTF-8", TOKEN: "fixture-token" }, exitCode: 0 },
+      });
+
+    const inherited = await driver.exec({
+      sandbox,
+      identity: identity("env_inherited"),
+      command,
+      deadlineSeconds: 30,
+      maxOutputBytes: 32,
+    });
+
+    // The merged environment is LANG=C, which differs from the fixture's override.
+    expect(inherited.status).toBe("rejected");
+
+    const overridden = await driver.exec({
+      sandbox,
+      identity: identity("env_overridden"),
+      command,
+      env: { LANG: "C.UTF-8" },
+      deadlineSeconds: 30,
+      maxOutputBytes: 32,
+    });
+
+    expect(overridden.status).toBe("completed");
+  });
+
   test("exec translates cwd, environment, deadline and rejects cross-action submission reuse", async () => {
     const { driver, control } = await setup();
 

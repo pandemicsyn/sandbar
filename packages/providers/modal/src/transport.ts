@@ -7,6 +7,7 @@ import {
   type App,
   type Image,
   type ModalClientParams,
+  type SandboxCreateParams,
   type Sandbox,
 } from "modal";
 import { z } from "zod";
@@ -111,6 +112,8 @@ export interface ModalTransport {
     tags: Record<string, string>;
     timeoutMs: number;
     regions?: string[];
+    /** Native sandbox environment, sent in the single create request; values may be secrets. */
+    env?: Record<string, string>;
   }): Promise<string>;
   findByName(
     appName: string,
@@ -296,8 +299,12 @@ export function createSdkTransport(input: {
         throw error;
       }
     },
-    async create({ appId, imageId, ociReference, name, tags, timeoutMs, regions }) {
-      const secrets = [input.tokenId, input.tokenSecret];
+    async create({ appId, imageId, ociReference, name, tags, timeoutMs, regions, env }) {
+      // Environment values may be secrets; native error details never echo them.
+      const secrets = [input.tokenId, input.tokenSecret, ...Object.values(env ?? {})].sort(
+        (a, b) => b.length - a.length,
+      );
+
       let app: App;
       let image: Image;
 
@@ -321,15 +328,12 @@ export function createSdkTransport(input: {
       }
 
       let sandbox: Sandbox;
+      const params: SandboxCreateParams = { name, tags, timeoutMs, regions, blockNetwork: true };
+
+      if (env) params.env = env;
 
       try {
-        sandbox = await client.sandboxes.experimentalCreate(app, image, {
-          name,
-          tags,
-          timeoutMs,
-          regions,
-          blockNetwork: true,
-        });
+        sandbox = await client.sandboxes.experimentalCreate(app, image, params);
       } catch (error) {
         const rejection = createRejection(error, "sandbox", secrets);
 

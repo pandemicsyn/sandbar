@@ -534,6 +534,100 @@ describe("sandbar CLI against the fake provider", () => {
     expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
   });
 
+  test("ls --remote lists provider sandboxes and adopt records one without owning it", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+    const elsewhere = { SANDBAR_STATE_DIR: join(dir, "elsewhere") };
+    const create = ["create", "--prepared", "fake-starter", "--json"];
+    const other = envelope(await cli(create, elsewhere)).data.id;
+    const gone = envelope(await cli(create, elsewhere)).data.id;
+    await cli(["rm", "--all"], elsewhere);
+    // Another store created and destroyed two sandboxes; this store only knows web.
+    expect(await storeNames()).toEqual(["web.json"]);
+
+    const listed = envelope(await cli(["ls", "--remote", "--json"]));
+    const web = JSON.parse(await readFile(join(dir, "state", "sandboxes", "web.json"), "utf8"));
+    expect(listed.data).toMatchObject({ provider: "fake", coverage: "provider-scope" });
+    expect(listed.data.complete).toBe(true);
+    expect(
+      listed.data.sandboxes.map((row: { id: string; name: string | null; state: string }) => [
+        row.id,
+        row.name,
+        row.state,
+      ]),
+    ).toEqual([
+      [web.reference.nativeId, "web", "running"],
+      [other, null, "destroyed"],
+      [gone, null, "destroyed"],
+    ]);
+    expect(listed.data.sandboxes[1]).toMatchObject({ reopenable: true, ownership: "unknown" });
+
+    const human = await cli(["ls", "--remote"]);
+    expect(human.code).toBe(0);
+    expect(human.stdout.split("\n")[0]).toMatch(/^ID\s+STATE\s+NAME\s+OWNERSHIP$/);
+    expect(human.stderr).toContain("fake lists every sandbox");
+
+    // A destroyed listed sandbox is never recorded.
+    const destroyed = await cli(["adopt", gone, "--json"]);
+    expect(envelope(destroyed)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(destroyed.code).toBe(3);
+
+    const live = envelope(await cli(create, elsewhere)).data.id;
+    const adopted = envelope(await cli(["adopt", live, "--name", "borrowed", "--json"]));
+    expect(adopted.data).toMatchObject({ name: "borrowed", id: live, adopted: true });
+    expect(await storeNames()).toEqual(["borrowed.json", "web.json"]);
+
+    const borrowed = JSON.parse(
+      await readFile(join(dir, "state", "sandboxes", "borrowed.json"), "utf8"),
+    );
+
+    // The record keeps the reference the reopen returned.
+    expect(borrowed.reference).toEqual(adopted.data.reference);
+    expect(borrowed.reference).toMatchObject({ kind: "sandbox", nativeId: live });
+    expect(envelope(await cli(["inspect", "borrowed", "--json"])).data.info.state).toBe("running");
+
+    const again = envelope(await cli(["adopt", live, "--json"]));
+    expect(again).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(envelope(await cli(["adopt", "missing-id", "--json"])).error.code).toBe("NOT_FOUND");
+    expect((await cli(["ls", "--remote", "--offline"])).code).toBe(2);
+
+    const all = envelope(await cli(["rm", "--all", "--json"]));
+    expect(all.data).toMatchObject({
+      removed: [{ name: "web", result: "destroyed" }],
+      skipped: [{ name: "borrowed", result: "skipped" }],
+    });
+
+    const refused = await cli(["rm", "borrowed", "--json"]);
+    expect(envelope(refused)).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect((await cli(["rm", "borrowed", "--force"])).code).toBe(0);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("ls --remote and adopt match stored sandboxes by scope, not native id alone", async () => {
+    await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
+    const path = join(dir, "state", "sandboxes", "web.json");
+    const web = JSON.parse(await readFile(path, "utf8"));
+    const id = web.reference.nativeId;
+
+    // The same native id in another project of the same provider, like two Vercel `worker`s.
+    web.reference.scope.partition = { ...web.reference.scope.partition, project: "elsewhere" };
+    await writeFile(path, JSON.stringify(web));
+
+    const listed = envelope(await cli(["ls", "--remote", "--json"]));
+    expect(listed.data.sandboxes).toMatchObject([{ id, name: null }]);
+
+    const adopted = envelope(await cli(["adopt", id, "--name", "here", "--json"]));
+    expect(adopted.data).toMatchObject({ name: "here", id, adopted: true });
+
+    const relisted = envelope(await cli(["ls", "--remote", "--json"]));
+    expect(relisted.data.sandboxes).toMatchObject([{ id, name: "here" }]);
+    expect(envelope(await cli(["adopt", id, "--json"])).error.code).toBe("CONFLICT");
+
+    // An id that names two stored sandboxes is refused rather than guessed.
+    const ambiguous = envelope(await cli(["inspect", id, "--json"]));
+    expect(ambiguous).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(envelope(await cli(["inspect", "here", "--json"])).data.info.state).toBe("running");
+  });
+
   test("rm --all skips records it cannot destroy and reports them", async () => {
     await cli(["create", "--name", "web", "--prepared", "fake-starter"]);
     await control("/_test/seed", {
@@ -969,9 +1063,11 @@ describe("sandbar CLI against the fake provider", () => {
         source: "python:3.12",
         profile: "builder",
         status: "built",
-        prepared: "fake-starter",
+        prepared: "fake-image-1",
         built: true,
-        retainedResources: [{ kind: "fake-image", id: "fake-starter", cleanup: "manual" }],
+        retainedResources: [
+          { kind: "fake-image", id: "fake-image-1", cleanup: "manual", ownership: "verified" },
+        ],
       });
 
       const again = await image(["image", "build", "python:3.12", "--json"]);
@@ -1086,7 +1182,12 @@ describe("sandbar CLI against the fake provider", () => {
       const inspected = await image(["image", "inspect", "tool-1", "--json"]);
 
       expect(inspected.code).toBe(0);
-      expect(envelope(inspected).data).toMatchObject({ status: "built", prepared: "fake-starter" });
+      expect(envelope(inspected).data).toMatchObject({
+        status: "built",
+        prepared: "fake-image-1",
+        // Found again after a lost response, so the build does not claim verified ownership.
+        reference: { kind: "image", nativeId: "fake-image-1", ownership: "unknown" },
+      });
       expect(await buildLog()).toEqual(["lost/tool:1"]);
     });
 
@@ -1096,7 +1197,8 @@ describe("sandbar CLI against the fake provider", () => {
       const forgot = await image(["image", "forget", "py"]);
 
       expect(forgot.code).toBe(0);
-      expect(forgot.stdout).toContain("fake-image fake-starter (cleanup manual");
+      expect(forgot.stdout).toContain("fake-image fake-image-1 (cleanup manual");
+      expect(forgot.stdout).toContain("forget never deletes them");
       expect((await image(["image", "inspect", "py", "--json"])).code).toBe(3);
 
       const named = await image(["image", "build", "python:3.12", "--name", "Bad Name", "--json"]);
@@ -1104,13 +1206,396 @@ describe("sandbar CLI against the fake provider", () => {
       expect(named.code).toBe(2);
     });
 
+    test("image rm deletes the built image on the provider and then the record", async () => {
+      const built = await image(["image", "build", "python:3.12", "--json"]);
+
+      expect(envelope(built).data.prepared).toBe("fake-image-1");
+
+      const remote = await image(["image", "ls", "--remote", "--json"]);
+
+      expect(remote.code).toBe(0);
+      expect(envelope(remote).data).toMatchObject({
+        profile: "builder",
+        coverage: "provider-scope",
+      });
+      expect(
+        envelope(remote).data.images.map((row: { id: string; record: string | null }) => [
+          row.id,
+          row.record,
+        ]),
+      ).toEqual([
+        ["fake-starter", null],
+        ["fake-image-1", "python-3-12"],
+      ]);
+      expect((await image(["image", "ls", "--remote"])).stdout).toContain("python-3-12");
+
+      const removed = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(removed.code).toBe(0);
+      expect(envelope(removed).data).toMatchObject({
+        name: "python-3-12",
+        result: "deleted",
+        prepared: "fake-image-1",
+        retainedResources: [],
+      });
+      expect((await image(["image", "inspect", "python-3-12", "--json"])).code).toBe(3);
+
+      const after = await image(["image", "ls", "--remote", "--json"]);
+
+      expect(envelope(after).data.images.map((row: { id: string }) => row.id)).toEqual([
+        "fake-starter",
+      ]);
+    });
+
+    test("image rm refuses an image a sandbox still uses and keeps the record", async () => {
+      await image(["image", "build", "python:3.12"]);
+      expect((await image(["create", "--name", "py", "--image", "python:3.12"])).code).toBe(0);
+
+      const refused = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(refused.code).not.toBe(0);
+      expect(refused.code).not.toBe(6);
+      expect(envelope(refused).error).toMatchObject({ code: "CONFLICT", outcome: "rejected" });
+      expect((await image(["image", "inspect", "python-3-12", "--json"])).code).toBe(0);
+
+      expect((await image(["rm", "py"])).code).toBe(0);
+      expect((await image(["image", "rm", "python-3-12"])).code).toBe(0);
+    });
+
+    test("an uncertain image rm keeps the record and a second rm confirms without resubmitting", async () => {
+      await image(["image", "build", "lost/tool:2"]);
+      expect((await image(["image", "inspect", "tool-2", "--json"])).code).toBe(0);
+
+      // The build was recovered from an uncertain response, so this CLI cannot prove it made it.
+      const refused = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(envelope(refused).error.code).toBe("FORBIDDEN");
+
+      const lost = await image(["image", "rm", "tool-2", "--force", "--json"]);
+
+      expect(lost.code).toBe(6);
+      expect(envelope(lost).error).toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: "unknown",
+        known: { image: "tool-2", recovery: { kind: "image_delete" } },
+      });
+
+      const kept = await image(["image", "inspect", "tool-2", "--json"]);
+
+      expect(envelope(kept).data.status).toBe("deleting");
+
+      // A deleting record is never reused for a create.
+      const create = await image(["create", "--image", "lost/tool:2", "--json"]);
+
+      expect(envelope(create).error.code).toBe("UNSUPPORTED");
+
+      const confirmed = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(confirmed.code).toBe(0);
+      expect(envelope(confirmed).data).toMatchObject({ name: "tool-2", result: "deleted" });
+      expect((await image(["image", "inspect", "tool-2", "--json"])).code).toBe(3);
+    });
+
+    test("image rm deletes a build this CLI did not verifiably create only with --force", async () => {
+      await image(["image", "build", "python:3.12"]);
+      const path = join(dir, "state", "images", "python-3-12.json");
+      // A record from an older CLI has no image reference, so its ownership is unknown.
+      const { reference: _reference, ...legacy } = JSON.parse(await readFile(path, "utf8"));
+      await writeFile(path, JSON.stringify(legacy));
+
+      const refused = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(refused.code).not.toBe(0);
+      expect(envelope(refused).error).toMatchObject({
+        code: "FORBIDDEN",
+        outcome: "rejected",
+        message: "python-3-12 was not created by this CLI (ownership unknown)",
+        hint: "pass --force to delete it anyway",
+      });
+      expect((await image(["image", "inspect", "python-3-12", "--json"])).code).toBe(0);
+      expect((await image(["image", "ls", "--force"])).code).toBe(2);
+
+      const forced = await image(["image", "rm", "python-3-12", "--force", "--json"]);
+
+      expect(forced.code).toBe(0);
+      expect(envelope(forced).data).toMatchObject({ name: "python-3-12", result: "deleted" });
+    });
+
+    test("an uncertain image rm with nothing to observe keeps the record built", async () => {
+      await writeConfig({
+        default: "unobservable",
+        profiles: { unobservable: { module: fixture, export: "unobservableDelete" } },
+      });
+      await image(["image", "build", "python:3.12"]);
+
+      const lost = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(lost.code).toBe(6);
+      expect(envelope(lost).error).toMatchObject({
+        code: "OUTCOME_UNKNOWN",
+        outcome: "unknown",
+        known: { image: "python-3-12" },
+      });
+      expect(envelope(lost).error.known.recovery).toBeUndefined();
+      expect(envelope(lost).error.hint).toContain("no saved delete to check");
+
+      const kept = await image(["image", "inspect", "python-3-12", "--json"]);
+
+      expect(envelope(kept).data).toMatchObject({ status: "built", recovery: null });
+    });
+
+    test("a deleting record with no saved delete returns to built instead of sticking", async () => {
+      await image(["image", "build", "python:3.12"]);
+      const path = join(dir, "state", "images", "python-3-12.json");
+      const record = JSON.parse(await readFile(path, "utf8"));
+      await writeFile(path, JSON.stringify({ ...record, status: "deleting" }));
+
+      const stuck = await image(["image", "rm", "python-3-12", "--json"]);
+
+      expect(stuck.code).toBe(6);
+      expect(envelope(stuck).error.message).toBe("python-3-12 has no saved delete to check");
+      expect(envelope(await image(["image", "inspect", "python-3-12", "--json"])).data.status).toBe(
+        "built",
+      );
+      expect((await image(["image", "rm", "python-3-12"])).code).toBe(0);
+    });
+
+    test("a failed check of an uncertain delete keeps the record deleting", async () => {
+      await image(["image", "build", "lost/tool:2"]);
+      expect((await image(["image", "rm", "tool-2", "--force"])).code).toBe(6);
+
+      const saved = envelope(await image(["image", "inspect", "tool-2", "--json"])).data;
+
+      expect(saved.status).toBe("deleting");
+
+      // The profile now reaches another account, which cannot check the saved delete.
+      await writeConfig({
+        default: "builder",
+        profiles: { builder: { module: fixture, export: "otherAccount" } },
+      });
+
+      const checked = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(checked.code).toBe(5);
+      expect(envelope(checked).error).toMatchObject({
+        code: "FORBIDDEN",
+        known: { image: "tool-2", recovery: { kind: "image_delete" } },
+      });
+      expect(envelope(checked).error.hint).toContain("account the delete was sent from");
+
+      const kept = envelope(await image(["image", "inspect", "tool-2", "--json"])).data;
+
+      expect(kept).toMatchObject({ status: "deleting", recovery: saved.recovery });
+
+      // Back on the original account, rm checks the saved delete and completes.
+      await writeConfig({
+        default: "builder",
+        profiles: { builder: { module: fixture, export: "builder" } },
+      });
+
+      const confirmed = await image(["image", "rm", "tool-2", "--json"]);
+
+      expect(confirmed.code).toBe(0);
+      expect(envelope(confirmed).data).toMatchObject({ name: "tool-2", result: "deleted" });
+    });
+
+    test("image ls --remote reports an unsupported provider and --remote is ls-only", async () => {
+      await writeConfig({
+        default: "builder",
+        profiles: {
+          builder: { module: fixture, export: "builder" },
+          plain: { module: fixture, export: "plain" },
+        },
+      });
+      await image(["image", "build", "python:3.12", "--name", "py"]);
+
+      const listed = await image(["image", "ls", "--remote", "--profile", "plain", "--json"]);
+
+      expect(listed.code).toBe(4);
+      expect(envelope(listed).error.message).toBe("plain cannot list images through Sandbar");
+
+      expect((await image(["image", "ls", "py", "--remote"])).code).toBe(2);
+      expect((await image(["image", "inspect", "py", "--remote"])).code).toBe(2);
+    });
+
     test("image completion offers actions and recorded names", async () => {
       await image(["image", "build", "python:3.12"]);
 
       expect((await cli(["__complete", "--", "image", ""])).stdout).toContain("build");
+      expect((await cli(["__complete", "--", "image", ""])).stdout).toContain("rm");
+      expect((await cli(["__complete", "--", "image", "rm", ""])).stdout).toContain(
+        "python-3-12\tpython:3.12 on builder",
+      );
       expect((await cli(["__complete", "--", "image", "forget", ""])).stdout).toContain(
         "python-3-12\tpython:3.12 on builder",
       );
     });
+  });
+});
+
+describe("create-time environment", () => {
+  const secret = "CANARY-cli-env-secret";
+
+  async function storeText() {
+    const directory = join(dir, "state");
+    const files = await readdir(directory, { recursive: true }).catch(() => []);
+
+    const texts = await Promise.all(
+      files.map((file) => readFile(join(directory, String(file)), "utf8").catch(() => "")),
+    );
+
+    return texts.join("\n");
+  }
+
+  test("--env-file, --env and --env NAME reach the native create and no value is kept", async () => {
+    await writeFile(
+      join(dir, "ci.env"),
+      [
+        "# comment",
+        "export MODE=file",
+        'QUOTED="a b"',
+        "",
+        "API_TOKEN=from-file",
+        "PLAIN=  spaced value   # a comment",
+        "HASHED=a#b",
+        "EMPTY= # nothing",
+        'ESCAPED="line\\none \\"q\\" back\\\\slash" # comment',
+        "LITERAL='raw \\n \\\\' # comment",
+      ].join("\n") + "\n",
+    );
+
+    const created = await cli(
+      [
+        "create",
+        "--name",
+        "box",
+        "--prepared",
+        "fake-starter",
+        "--env-file",
+        "ci.env",
+        "--env",
+        "MODE=flag",
+        "--env",
+        "API_TOKEN",
+        "--json",
+      ],
+      { API_TOKEN: secret },
+    );
+
+    expect(created.code).toBe(0);
+    expect(envelope(created).data.name).toBe("box");
+    expect(`${created.stdout}${created.stderr}`).not.toContain(secret);
+    expect(`${created.stdout}${created.stderr}`).not.toContain("from-file");
+    expect(await storeText()).not.toContain(secret);
+
+    const [resource] = await fakeResources();
+    // SAFETY: The fake engine's test state includes the native create-time environment.
+    expect((resource as FakeResource & { env?: Record<string, string> }).env).toEqual({
+      MODE: "flag",
+      QUOTED: "a b",
+      API_TOKEN: secret,
+      PLAIN: "spaced value",
+      HASHED: "a#b",
+      EMPTY: "",
+      ESCAPED: 'line\none "q" back\\slash',
+      LITERAL: "raw \\n \\\\",
+    });
+
+    // The fake matches an exec fixture against the sandbox env merged under the call's env.
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      command: {
+        command: { kind: "argv", argv: ["printenv"] },
+        env: {
+          MODE: "call",
+          QUOTED: "a b",
+          API_TOKEN: secret,
+          PLAIN: "spaced value",
+          HASHED: "a#b",
+          EMPTY: "",
+          ESCAPED: 'line\none "q" back\\slash',
+          LITERAL: "raw \\n \\\\",
+        },
+        exitCode: 0,
+        stdoutBase64: Buffer.from("ok\n").toString("base64"),
+      },
+    });
+
+    expect(await cli(["exec", "box", "--env", "MODE=call", "--", "printenv"])).toMatchObject({
+      code: 0,
+      stdout: "ok\n",
+    });
+    expect(await storeText()).not.toContain(secret);
+  });
+
+  test("an adapter without create env fails before creating and echoes no value", async () => {
+    await writeConfig({
+      default: "fake",
+      profiles: { fake: { module: fixture, export: "withoutCreateEnv" } },
+    });
+
+    const result = await cli([
+      "create",
+      "--name",
+      "box",
+      "--prepared",
+      "fake-starter",
+      "--env",
+      `API_TOKEN=${secret}`,
+      "--json",
+    ]);
+
+    expect(result.code).not.toBe(0);
+    expect(envelope(result).error.code).toBe("UNSUPPORTED");
+    expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    expect(await fakeResources()).toEqual([]);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("malformed env input is a usage error that names no value", async () => {
+    await writeFile(join(dir, "bad.env"), `GOOD=1\n${secret}\n`);
+
+    for (const args of [
+      ["--env-file", "bad.env"],
+      ["--env", `9BAD=${secret}`],
+      ["--env", "UNSET_FOR_TEST"],
+      ["--env-file", "missing.env"],
+    ]) {
+      const result = await cli(["create", "--prepared", "fake-starter", ...args, "--json"]);
+
+      expect(result.code).toBe(2);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    }
+
+    expect(envelope(await cli(["create", "--env-file", "bad.env", "--json"])).error.message).toBe(
+      "--env-file bad.env:2 must be NAME=VALUE with a valid NAME",
+    );
+
+    await writeFile(join(dir, "multi.env"), `GOOD=1\nKEY="${secret}\nrest"\n`);
+    await writeFile(join(dir, "trailing.env"), `KEY="${secret}" ${secret}\n`);
+
+    for (const [file, message] of [
+      [
+        "multi.env",
+        "--env-file multi.env:2 has an unterminated quoted value; multi-line values are not supported",
+      ],
+      ["trailing.env", "--env-file trailing.env:1 has text after the closing quote"],
+    ]) {
+      const result = await cli([
+        "create",
+        "--prepared",
+        "fake-starter",
+        "--env-file",
+        file!,
+        "--json",
+      ]);
+
+      expect(result.code).toBe(2);
+      expect(envelope(result).error.message).toBe(message);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    }
+
+    expect(await fakeResources()).toEqual([]);
   });
 });

@@ -55,7 +55,7 @@ The public input is the existing `CreateInput` with optional `environment`; crea
 
 Defaults are explicit values, not a fallback search. Validate overrides normally: a foreign scoped image rejects before creation; an unavailable template does not fall back to `base`; an OCI image does not cause an unrequested build. Preserve the existing build/restore paths. Never substitute a new sandbox after an uncertain create. Returned sandbox references remain persistable using the shipped contract.
 
-The October 11 network slice supersedes the original exclusion of network simplification: configured session networking now supplies omitted create/restore policies, with blocked as the legacy fallback. Lifetime policy, image resolution, mounts and permissions stay in their existing contracts. CPU/memory sizing and create-time environment variables are outside this change.
+The October 11 network slice supersedes the original exclusion of network simplification: configured session networking now supplies omitted create/restore policies, with blocked as the legacy fallback. Lifetime policy, image resolution, mounts and permissions stay in their existing contracts. CPU/memory sizing is outside this change. Create-time environment variables are a separate, implemented `CreateInput.env`: adapters declare `supports.createEnv` only when the variables are native sandbox state that applies to every command, process and terminal after reopen, and the SDK rejects `env` with `UnsupportedFeatureError` before allocation elsewhere. Values never enter recovery references, tokens, telemetry or messages; restore does not accept them.
 
 ## Text files without encoding boilerplate
 

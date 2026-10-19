@@ -431,6 +431,43 @@ export function createVercelAdapter(
         };
       };
 
+      // Listing never sees the creating operation, so references carry native generation evidence
+      // where the binding needs it, but no creation receipt and no ownership claim.
+      const listPage = async (input: { cursor?: string; limit: number }, ctx: ReadContext) => {
+        const query = new URLSearchParams({
+          project: project.id,
+          limit: String(Math.min(input.limit, 100)),
+        });
+
+        if (input.cursor) query.set("cursor", input.cursor);
+        const result = await client.json(`/v2/sandboxes?${query}`, readSignal(ctx), page);
+
+        return {
+          items: result.sandboxes
+            .filter((box) => box.persistent === config.persistent && box.region === config.region)
+            .filter(
+              (box) =>
+                !config.persistent ||
+                (box.createdAt !== undefined && box.tags?.sandbarSubmission !== undefined),
+            )
+            .map((box) => {
+              const id = config.persistent ? box.name : box.currentSessionId;
+
+              return {
+                id,
+                state:
+                  config.persistent && ["stopped", "aborted"].includes(box.status)
+                    ? ("unknown" as const)
+                    : state(box.status),
+                reference: config.persistent
+                  ? { ...reference(id), generation: generation(box) }
+                  : reference(id),
+              };
+            }),
+          nextCursor: result.pagination.next ?? undefined,
+        };
+      };
+
       const inspection = async (box: Sandbox, signal: AbortSignal): Promise<SandboxInfo> => {
         checkReference(box);
 
@@ -849,6 +886,8 @@ export function createVercelAdapter(
               failoverRegions: [],
               networkPolicy: { mode },
               tags: { ...input.labels, sandbarSubmission: ctx.submissionId },
+              // Native session defaults; every command inherits them unless its own env overrides.
+              env: input.env && Object.keys(input.env).length ? input.env : undefined,
             };
 
             let acknowledgement;
@@ -859,10 +898,16 @@ export function createVercelAdapter(
                 signal,
                 z.object({ session: z.object({ id }).passthrough() }).passthrough(),
                 requestBody,
+                undefined,
+                // Create-time environment values may be secrets; a native echo never reaches a message.
+                Object.values(input.env ?? {}),
               );
             } catch (error) {
               if (!(error instanceof VercelRequestRejected)) throw error;
-              const message = `Vercel rejected sandbox creation (HTTP ${error.status})${error.detail ? `: ${error.detail}` : ""}`;
+
+              const detail = error.detail ?? "";
+
+              const message = `Vercel rejected sandbox creation (HTTP ${error.status})${detail ? `: ${detail}` : ""}`;
               const code = createRejections.get(error.status);
 
               return code
@@ -1235,6 +1280,7 @@ export function createVercelAdapter(
           network: [networkPolicy],
           exec: { commands: ["argv", "shell"], maxOutputBytes: maxBytes },
           fileWrite: { overwrite: true, noClobber: true },
+          createEnv: true,
         },
         suspensionCapabilities: async () =>
           config.persistent
@@ -2149,30 +2195,24 @@ export function createVercelAdapter(
           return { id: box.id, ...(await inspection(box, readSignal(ctx))) };
         },
         async inventory(input, ctx) {
-          const query = new URLSearchParams({
-            project: project.id,
-            limit: String(Math.min(input.limit, 100)),
-          });
-
-          if (input.cursor) query.set("cursor", input.cursor);
-          const result = await client.json(`/v2/sandboxes?${query}`, readSignal(ctx), page);
+          const result = await listPage(input, ctx);
 
           return {
-            items: result.sandboxes
-              .filter((box) => box.persistent === config.persistent && box.region === config.region)
-              .filter(
-                (box) =>
-                  !config.persistent ||
-                  (box.createdAt !== undefined && box.tags?.sandbarSubmission !== undefined),
-              )
-              .map((box) => ({
-                id: config.persistent ? box.name : box.currentSessionId,
-                state:
-                  config.persistent && ["stopped", "aborted"].includes(box.status)
-                    ? ("unknown" as const)
-                    : state(box.status),
-              })),
-            nextCursor: result.pagination.next ?? undefined,
+            items: result.items.map((item) => ({ id: item.id, state: item.state })),
+            nextCursor: result.nextCursor,
+          };
+        },
+        async sandboxList(input, ctx) {
+          const result = await listPage(input, ctx);
+
+          return {
+            // Persistent bindings list only sandboxes tagged with a Sandbar submission; session
+            // bindings list every session-mode sandbox in the project and region.
+            coverage: config.persistent
+              ? ("sandbar-managed" as const)
+              : ("provider-scope" as const),
+            items: result.items,
+            nextCursor: result.nextCursor,
           };
         },
         processes,

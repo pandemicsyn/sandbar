@@ -25,6 +25,7 @@ export const ReferenceSchema = z.strictObject({
     "file_mkdir",
     "file_remove",
     "image_build",
+    "image_delete",
     "sandbox_suspend",
     "sandbox_resume",
     "sandbox_renew",

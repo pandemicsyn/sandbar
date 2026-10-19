@@ -58,7 +58,9 @@ try {
 | `persistent`          | `false`                           | Keep files across stopped sessions. Resume starts fresh compute; processes and RAM are lost.                                                                                                                 |
 | `credentials.token`   | Required                          | Token with access to the selected team and project.                                                                                                                                                          |
 
-`client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported.
+`client.sandboxes.create()` uses this setup. Any image, region or policy supplied on an individual create call must match it. Arbitrary container images, OCI builds and mounted drives are not supported. Image get, list and delete are unsupported too: Vercel only offers its managed images, so `images.*` reject with `UNSUPPORTED`.
+
+`create({ env })` sets Vercel's native session `env`, which every command inherits unless its own `env` overrides a name; it applies after reopening. Values are not saved in recovery tokens and are redacted from Vercel's error text. Snapshot restore does not take `env`. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables). Live acceptance remains unrun.
 
 ## Commands, processes and files
 
@@ -77,6 +79,8 @@ By default, each sandbox reference identifies one original VM session. `box.dest
 `box.renew({ forSeconds: 61 })` **adds** 61 seconds to the running session's timeout. Each request accepts 1–86,400 seconds; Vercel caps total session time by plan (Hobby 45 minutes, Pro/Enterprise 24 hours) and native rejection remains an error. See [Vercel Sandbox pricing and limits](https://vercel.com/docs/sandbox/pricing). Inspecting or reopening a sandbox never renews or resumes it.
 
 Save `box.reference` in trusted application storage, then pass it to `freshClient.sandboxes.get(savedReference)` using the same team, project and region with current credentials. This reopens the original session without creating compute. A lookup searches at most 10,000 project sessions and fails if it cannot verify membership. See [resource references](/docs/guides/resources/) and [recovery](/docs/guides/recovery/).
+
+`sandboxes.list()` lists sandboxes in the configured project and region. In session mode it reports `coverage: "provider-scope"` and lists every session-mode sandbox. With `persistent: true` it reports `"sandbar-managed"` and lists only named sandboxes with Sandbar's creation tag; their references carry the native generation used to detect a replaced name. Vercel does not record the creating operation, so listed references have `ownership: "unknown"` and no creation receipt. They reopen with `get()`.
 
 If a mutation response is lost, the adapter preserves known IDs and uncertainty. Recovery reads the original operation's evidence; it never repeats create, input delivery, snapshot, restore or delete. A confirmed command exit remains available even if reading its output later fails. Unverified or interrupted input stages and capture receipts can remain until sandbox teardown.
 

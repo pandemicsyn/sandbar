@@ -6,11 +6,14 @@ import {
   NonzeroExitError,
   ResourceReference,
   SandbarError,
+  assertResourceScope,
   type CreateInput,
   type ExecInput,
   type ExecOutput,
   type SandbarClient,
   type SandboxHandle,
+  type SandboxList,
+  type SandboxListEntry,
 } from "sandbar-sdk";
 import { z } from "zod";
 import { searchProjectAdapters, valueAvailable, type Env, type LoadedConfig } from "./config";
@@ -68,11 +71,13 @@ type CreateRequest = {
   prepared?: string;
   network?: string;
   labels: Record<string, string>;
+  /** Sandbox-wide environment; values never reach the store, output or messages. */
+  env: Record<string, string>;
   /** Build --image now when the provider needs a build and none is recorded. */
   build: boolean;
 };
 
-function createRequest(flags: Flags): CreateRequest {
+function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRequest {
   if (flags.string("image") && flags.string("prepared"))
     throw usage("Pass either --image or --prepared, not both");
 
@@ -86,7 +91,107 @@ function createRequest(flags: Flags): CreateRequest {
     prepared: flags.string("prepared"),
     network: flags.string("network"),
     labels: parsePairs(flags.strings("label"), "label"),
+    env,
   };
+}
+
+const EnvName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const escapes = new Map([
+  ["n", "\n"],
+  ['"', '"'],
+  ["\\", "\\"],
+]);
+
+/**
+ * One `--env-file` value: unquoted text up to a ` #` comment, trimmed; `"..."` with `\n`, `\"`
+ * and `\\` escapes; or literal `'...'`. A comment may follow a closing quote. The error names
+ * the problem only, since the value may be a secret.
+ */
+function envFileValue(text: string): { value: string } | { error: string } {
+  const value = text.trimStart();
+  const quote = value[0];
+
+  if (quote !== '"' && quote !== "'") return { value: text.replace(/\s#.*$/s, "").trim() };
+
+  let parsed = "";
+  let end = -1;
+
+  for (let at = 1; at < value.length; at++) {
+    const char = value[at]!;
+
+    if (char === quote) {
+      end = at;
+      break;
+    }
+
+    if (quote === '"' && char === "\\" && at + 1 < value.length) {
+      const next = value[++at]!;
+      parsed += escapes.get(next) ?? `\\${next}`;
+    } else parsed += char;
+  }
+
+  if (end < 0)
+    return { error: "has an unterminated quoted value; multi-line values are not supported" };
+
+  if (!/^\s*(#.*)?$/s.test(value.slice(end + 1)))
+    return { error: "has text after the closing quote" };
+
+  return { value: parsed };
+}
+
+/**
+ * `--env-file` lines, then `--env` flags (later wins). `--env NAME` copies NAME from this
+ * process so a secret stays out of shell history. Values may be secrets: messages name at
+ * most a file and line, never a value.
+ */
+async function envFlags(session: Session, flags: Flags): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+
+  for (const file of flags.strings("env-file")) {
+    const path = resolve(session.ctx.cwd, file);
+    let text: string;
+
+    try {
+      text = await readFile(path, "utf8");
+    } catch {
+      throw usage(`--env-file ${file} could not be read`);
+    }
+
+    for (const [index, raw] of text.split(/\r?\n/).entries()) {
+      const line = raw.trim();
+
+      if (!line || line.startsWith("#")) continue;
+      const assignment = line.startsWith("export ") ? line.slice(7).trimStart() : line;
+      const split = assignment.indexOf("=");
+      const name = split > 0 ? assignment.slice(0, split).trim() : "";
+
+      if (!EnvName.test(name))
+        throw usage(`--env-file ${file}:${index + 1} must be NAME=VALUE with a valid NAME`);
+      const parsed = envFileValue(assignment.slice(split + 1));
+
+      if ("error" in parsed) throw usage(`--env-file ${file}:${index + 1} ${parsed.error}`);
+      env[name] = parsed.value;
+    }
+  }
+
+  for (const entry of flags.strings("env")) {
+    const split = entry.indexOf("=");
+    const name = split < 0 ? entry : entry.slice(0, split);
+
+    if (!EnvName.test(name))
+      throw usage("--env expects NAME=VALUE or NAME, with NAME like [A-Za-z_][A-Za-z0-9_]*");
+
+    if (split >= 0) env[name] = entry.slice(split + 1);
+    else {
+      const inherited = session.ctx.env[name];
+
+      if (inherited === undefined) throw usage(`--env ${name} is not set in this environment`);
+      env[name] = inherited;
+    }
+  }
+
+  return env;
 }
 
 /** The create input; `--image` is resolved after connecting, because it depends on the provider. */
@@ -95,6 +200,7 @@ function createInput(request: CreateRequest): CreateInput {
     environment: request.prepared ? Image.prepared(request.prepared) : undefined,
     network: request.network,
     labels: Object.keys(request.labels).length ? request.labels : undefined,
+    env: Object.keys(request.env).length ? request.env : undefined,
   };
 }
 
@@ -301,6 +407,7 @@ function sandboxSummary(record: SandboxRecord) {
     createdAt: record.createdAt,
     labels: record.labels,
     image: record.image ?? null,
+    adopted: record.adopted ?? false,
   };
 }
 
@@ -342,11 +449,19 @@ async function findTarget(session: Session, target: string): Promise<Target> {
     if (entry) return entry;
   }
 
-  const byId = (await listAll(store, "sandbox")).find(
+  const byId = (await listAll(store, "sandbox")).filter(
     (entry) => entry.record.reference?.nativeId === target,
   );
 
-  if (byId) return byId;
+  // The same native id can exist in two accounts or projects; never guess between them.
+  if (byId.length > 1)
+    throw new CliError(
+      "CONFLICT",
+      `${target} names more than one stored sandbox: ${byId.map((entry) => entry.record.name).join(", ")}`,
+      "use the store name instead of the id",
+    );
+
+  if (byId[0]) return byId[0];
 
   throw new CliError(
     "NOT_FOUND",
@@ -356,7 +471,10 @@ async function findTarget(session: Session, target: string): Promise<Target> {
 }
 
 export async function createCommand(session: Session, flags: Flags): Promise<number> {
-  const created = await createSandbox(session, createRequest(flags));
+  const created = await createSandbox(
+    session,
+    createRequest(flags, await envFlags(session, flags)),
+  );
 
   if (created.unrecorded) throw unrecordedError(created);
 
@@ -393,7 +511,184 @@ async function stateOf(
   }
 }
 
+/** Pages fetched by `ls --remote` and `adopt` before they stop and report an incomplete listing. */
+const REMOTE_PAGES = 20;
+
+type RemoteListing = {
+  items: SandboxListEntry[];
+  coverage: SandboxList["coverage"];
+  /** False when the provider had more pages than this CLI reads. */
+  complete: boolean;
+};
+
+/** Page through the provider's sandbox listing, stopping early once `until` matches an item. */
+async function remoteSandboxes(
+  client: SandbarClient<true>,
+  until?: (item: SandboxListEntry) => boolean,
+): Promise<RemoteListing> {
+  const items: SandboxListEntry[] = [];
+  let cursor: string | undefined;
+  let coverage: SandboxList["coverage"] = "provider-scope";
+
+  for (let page = 0; page < REMOTE_PAGES; page++) {
+    const result = await client.sandboxes.list({ cursor, limit: 100 });
+    coverage = result.coverage;
+    items.push(...result.items);
+    cursor = result.nextCursor;
+
+    if (!cursor || (until && result.items.some(until))) return { items, coverage, complete: true };
+  }
+
+  return { items, coverage, complete: false };
+}
+
+const coverageNote = {
+  "provider-scope": "every sandbox this profile's account and scope can see",
+  "sandbar-managed": "only sandboxes created through Sandbar in this profile's scope",
+} satisfies Record<SandboxList["coverage"], string>;
+
+function renderTable(rows: string[][]): string {
+  const widths = rows[0]!.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)));
+
+  return rows
+    .map((row) =>
+      row
+        .map((cell, column) => cell.padEnd(widths[column]!))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n");
+}
+
+/** `ls --remote`: the provider's own listing for the selected profile, matched to store names. */
+async function remoteLs(session: Session): Promise<number> {
+  const { out } = session.ctx;
+  const profile = await session.profile();
+  const entries = await listAll(await session.store(), "sandbox", (warning) => out.note(warning));
+  const client = await session.connect(profile);
+  const listing = await remoteSandboxes(client);
+
+  const nameOf = (item: SandboxListEntry) =>
+    entries.find(({ record }) => storesSandbox(record, profile, client, item))?.record.name ?? null;
+
+  const rows = listing.items.map((item) => ({
+    id: item.id,
+    state: item.state,
+    name: nameOf(item),
+    reopenable: item.reference !== null,
+    ownership: item.reference?.ownership ?? null,
+    reference: item.reference,
+  }));
+
+  out.note(`${profile.provider} lists ${coverageNote[listing.coverage]}`);
+
+  if (!listing.complete)
+    out.note(`warning: showing the first ${rows.length} sandboxes; the provider has more`);
+
+  out.success(
+    {
+      provider: profile.provider,
+      profile: profile.name,
+      coverage: listing.coverage,
+      complete: listing.complete,
+      sandboxes: rows,
+    },
+    rows.length
+      ? renderTable([
+          ["ID", "STATE", "NAME", "OWNERSHIP"],
+          ...rows.map((row) => [
+            row.id,
+            row.state,
+            row.name ?? "-",
+            row.ownership ?? "not reopenable",
+          ]),
+        ])
+      : "",
+  );
+
+  return 0;
+}
+
+/** Record a provider-listed sandbox in the store so other commands can reach it by name. */
+export async function adoptCommand(session: Session, flags: Flags): Promise<number> {
+  const id = onePositional(flags, "sandbox id");
+  const requested = flags.string("name");
+  const store = await session.store();
+  const profile = await session.profile();
+
+  const client = await session.connect(profile);
+  const listing = await remoteSandboxes(client, (item) => item.id === id);
+  const listed = listing.items.find((item) => item.id === id);
+
+  // Native ids repeat across accounts and projects; only the same scoped resource is a duplicate.
+  const known =
+    listed &&
+    (await listAll(store, "sandbox")).find(({ record }) =>
+      storesSandbox(record, profile, client, listed),
+    );
+
+  if (known)
+    throw new CliError(
+      "CONFLICT",
+      `${id} is already in the store as ${known.record.name}`,
+      `use \`sandbar inspect ${known.record.name}\``,
+    );
+
+  if (!listed)
+    throw new CliError(
+      "NOT_FOUND",
+      `${profile.provider} does not list a sandbox ${id} for profile ${profile.name}`,
+      listing.complete
+        ? "list what it does show with `sandbar ls --remote`"
+        : "the listing was cut short; check the provider's own tools",
+    );
+
+  if (!listed.reference)
+    throw new CliError(
+      "UNSUPPORTED",
+      `${profile.provider} lists ${id} without a reopenable reference`,
+      "this provider cannot verify that sandbox's identity, so the CLI cannot reach it",
+    );
+
+  // Reopen first so a destroyed or unreachable sandbox never gets a record.
+  const box = await client.sandboxes.get(listed.reference, { signal: session.ctx.signal });
+
+  const record: Omit<SandboxRecord, "name"> = {
+    format: 1,
+    kind: "sandbox",
+    status: "created",
+    profile: profile.name,
+    provider: profile.provider,
+    createdAt: new Date().toISOString(),
+    labels: {},
+    reference: box.reference ?? listed.reference,
+    adopted: true,
+  };
+
+  let claimed: Versioned;
+
+  try {
+    claimed = await claimName(store, record, requested);
+  } catch (cause) {
+    if (cause instanceof CliError && cause.code === "CONFLICT")
+      throw new CliError("CONFLICT", cause.message, "choose another --name");
+    throw cause;
+  }
+
+  session.ctx.out.success(
+    { ...sandboxSummary(claimed.record), id: box.id, reference: claimed.record.reference },
+    claimed.record.name,
+  );
+
+  return 0;
+}
+
 export async function lsCommand(session: Session, flags: Flags): Promise<number> {
+  if (flags.bool("remote") && flags.bool("offline"))
+    throw usage("Pass either --remote or --offline, not both");
+
+  if (flags.bool("remote")) return remoteLs(session);
+
   const entries = await listAll(await session.store(), "sandbox", (warning) =>
     session.ctx.out.note(warning),
   );
@@ -499,6 +794,14 @@ function refusal(record: SandboxRecord): CliError | null {
       { sandbox: record.name },
     );
 
+  if (record.adopted)
+    return new CliError(
+      "FORBIDDEN",
+      `${record.name} was adopted from a provider listing, not created by this CLI`,
+      "pass --force to destroy it anyway",
+      { sandbox: record.name },
+    );
+
   if (record.reference.ownership !== "verified-created")
     return new CliError(
       "FORBIDDEN",
@@ -508,6 +811,37 @@ function refusal(record: SandboxRecord): CliError | null {
     );
 
   return null;
+}
+
+/** Whether a stored record is this listed sandbox: same provider, verified scope and identity. */
+function storesSandbox(
+  record: SandboxRecord,
+  profile: ResolvedProfile,
+  client: SandbarClient<true>,
+  item: SandboxListEntry,
+): boolean {
+  const stored = record.reference;
+
+  if (!stored || record.provider !== profile.provider || stored.nativeId !== item.id) return false;
+
+  if (
+    item.reference?.generation !== undefined &&
+    stored.generation !== undefined &&
+    stored.generation !== item.reference.generation
+  )
+    return false;
+
+  try {
+    assertResourceScope(stored, {
+      provider: client.provider,
+      scope: item.reference?.scope ?? client.scope,
+    });
+
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "CONFLICT") return false;
+    throw error;
+  }
 }
 
 /** Whether two records describe the same sandbox, so a replacement under the name is left alone. */
@@ -725,7 +1059,7 @@ async function execInput(
 
   const timeout = flags.string("timeout");
   const maxOutput = flags.string("max-output");
-  const env = parsePairs(flags.strings("env"), "env");
+  const env = await envFlags(session, flags);
 
   return {
     command,
@@ -834,6 +1168,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   if (flags.positionals.length)
     throw usage("run takes no positional arguments; put the command after --");
   const command = argvCommand(flags);
+  // run's --env and --env-file apply to its one command, which works on every provider.
   const request = createRequest(flags);
   const input = await execInput(session, flags, command);
   const keep = flags.bool("keep");

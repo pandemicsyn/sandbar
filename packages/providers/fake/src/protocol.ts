@@ -1,11 +1,42 @@
 import { z } from "zod";
-import { ExecCommand } from "@sandbar-sdk/adapter/portable";
+import { CreateEnv, ExecCommand } from "@sandbar-sdk/adapter/portable";
 import { InvocationIdentity, NativeScope, SandboxRef } from "@sandbar/provider-spi";
 
 export const FakeInventoryCursor = z
   .string()
   .regex(/^(0|[1-9][0-9]*)$/)
   .refine((cursor) => Number.isSafeInteger(Number(cursor)), "Cursor must be a safe integer");
+
+/** The provider image every fake connection may borrow; it is never deleted. */
+export const FAKE_STARTER_IMAGE = "fake-starter";
+
+export const FakeImageId = z
+  .string()
+  .regex(/^(fake-starter|fake-image-[1-9][0-9]{0,8})$/, "Invalid fake image ID");
+
+/** A fake provider image observation. Built images record their OCI source and submission. */
+export const FakeImage = z.strictObject({
+  id: FakeImageId,
+  state: z.enum(["ready"]),
+  visibility: z.enum(["public", "private"]),
+  source: z.string().min(1).max(1024).nullable(),
+  submissionId: z.string().min(1).max(128).nullable(),
+  createdAt: z.iso.datetime().nullable(),
+});
+
+export type FakeImage = z.infer<typeof FakeImage>;
+
+export const FakeImageDeleteResult = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("deleted"), imageId: FakeImageId }),
+  z.strictObject({ status: z.literal("not_found"), imageId: FakeImageId }),
+  z.strictObject({
+    status: z.literal("rejected"),
+    imageId: FakeImageId,
+    reason: z.enum(["public", "in_use"]),
+  }),
+]);
+
+export type FakeImageDeleteResult = z.infer<typeof FakeImageDeleteResult>;
 
 export const FakeAction = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("capabilities"), scope: NativeScope }),
@@ -16,6 +47,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
     image: z.string().min(1),
     networkPolicy: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
+    env: CreateEnv.optional(),
   }),
   z.strictObject({ kind: z.literal("inspect"), ref: SandboxRef }),
   z.strictObject({
@@ -54,6 +86,30 @@ export const FakeAction = z.discriminatedUnion("kind", [
     submissionId: z.string().min(1),
   }),
   z.strictObject({ kind: z.literal("events"), scope: NativeScope }),
+  z.strictObject({
+    kind: z.literal("imageBuild"),
+    scope: NativeScope,
+    identity: InvocationIdentity,
+    source: z.string().min(1).max(1024),
+  }),
+  z.strictObject({
+    kind: z.literal("imageInspect"),
+    scope: NativeScope,
+    imageId: FakeImageId.optional(),
+    submissionId: z.string().min(1).max(128).optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("imageList"),
+    scope: NativeScope,
+    cursor: FakeInventoryCursor.optional(),
+    limit: z.number().int().min(1).max(100),
+  }),
+  z.strictObject({
+    kind: z.literal("imageDelete"),
+    scope: NativeScope,
+    identity: InvocationIdentity,
+    imageId: FakeImageId,
+  }),
 ]);
 
 export type FakeAction = z.infer<typeof FakeAction>;

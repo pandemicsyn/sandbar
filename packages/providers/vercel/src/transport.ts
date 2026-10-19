@@ -69,6 +69,7 @@ export class VercelClient {
     body?: string | Uint8Array,
     headers?: Record<string, string>,
     method?: "GET" | "POST" | "DELETE",
+    secrets: readonly string[] = [],
   ) {
     const url = new URL(VERCEL_API + path);
     url.searchParams.set("teamId", this.teamId);
@@ -86,7 +87,7 @@ export class VercelClient {
     });
 
     if (!response.ok) {
-      const detail = await this.nativeDetail(response, signal);
+      const detail = await this.nativeDetail(response, signal, secrets);
 
       const code =
         response.status === 404
@@ -102,8 +103,12 @@ export class VercelClient {
 
     return response;
   }
-  /** Vercel's own error message, single-line, bounded and without the token. */
-  private async nativeDetail(response: Response, signal: AbortSignal): Promise<string | undefined> {
+  /** Vercel's own error message, single-line, bounded and without the token or request secrets. */
+  private async nativeDetail(
+    response: Response,
+    signal: AbortSignal,
+    secrets: readonly string[],
+  ): Promise<string | undefined> {
     try {
       const body = z
         .object({ error: z.object({ message: z.string() }) })
@@ -115,8 +120,11 @@ export class VercelClient {
           ),
         );
 
-      const text = body.error.message
-        .replaceAll(this.token, "[redacted]")
+      // Redact before normalizing and truncating, so multi-line or long secrets still match.
+      const text = [this.token, ...secrets]
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length)
+        .reduce((message, secret) => message.replaceAll(secret, "[redacted]"), body.error.message)
         .replace(/[\p{Cc}\s]+/gu, " ")
         .trim();
 
@@ -133,6 +141,7 @@ export class VercelClient {
     schema: z.ZodType<T>,
     body?: { [key: string]: Json | undefined },
     method?: "GET" | "POST" | "DELETE",
+    secrets: readonly string[] = [],
   ) {
     const response = await this.request(
       path,
@@ -140,6 +149,7 @@ export class VercelClient {
       body === undefined ? undefined : JSON.stringify(body),
       undefined,
       method,
+      secrets,
     );
 
     const bytes = await boundedBody(response, 2 * 1024 * 1024, signal);

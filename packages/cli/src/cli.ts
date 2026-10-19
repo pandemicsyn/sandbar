@@ -7,6 +7,7 @@ import {
   doctorCommand,
   execCommand,
   Flags,
+  adoptCommand,
   inspectCommand,
   lsCommand,
   providersCommand,
@@ -97,6 +98,19 @@ const createFlags = {
     description: "blocked or internet; default is the profile's policy",
   },
   label: { type: "string", multiple: true, value: "k=v", description: "Label to set (repeatable)" },
+  env: {
+    type: "string",
+    multiple: true,
+    value: "K=V",
+    description:
+      "Environment variable for every command in the sandbox (repeatable; K alone copies it from here)",
+  },
+  "env-file": {
+    type: "string",
+    multiple: true,
+    value: "path",
+    description: "Read K=V lines into the sandbox environment (repeatable; --env wins)",
+  },
   build: {
     type: "boolean",
     description: "Build --image now if this provider needs a build and none is recorded",
@@ -109,7 +123,13 @@ const execFlags = {
     type: "string",
     multiple: true,
     value: "K=V",
-    description: "Environment variable (repeatable)",
+    description: "Environment variable for this command (repeatable; K alone copies it from here)",
+  },
+  "env-file": {
+    type: "string",
+    multiple: true,
+    value: "path",
+    description: "Read K=V lines into this command's environment (repeatable; --env wins)",
   },
   stdin: { type: "boolean", description: "Send this process's stdin to the command" },
   "stdin-file": {
@@ -130,7 +150,7 @@ export const commands: readonly CommandSpec[] = [
     name: "create",
     summary: "Create a sandbox and print its name",
     usage:
-      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>]",
+      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--env K=V]...",
     flags: {
       ...createFlags,
       "if-not-exists": {
@@ -143,20 +163,41 @@ export const commands: readonly CommandSpec[] = [
     examples: [
       "sandbar create --name web --network internet",
       "sandbar create --name job-42 --if-not-exists --json",
+      "sandbar create --name ci --env-file .env --env API_TOKEN",
     ],
     run: createCommand,
   },
   {
     name: "ls",
     summary: "List sandboxes in the store with their current state",
-    usage: "sandbar ls [--offline]",
+    usage: "sandbar ls [--offline | --remote]",
     flags: {
       offline: { type: "boolean", description: "Show stored records without asking providers" },
+      remote: {
+        type: "boolean",
+        description: "List the profile's sandboxes from the provider instead of the store",
+      },
     },
     passthrough: false,
     remoteExit: false,
-    examples: ["sandbar ls", "sandbar ls --json"],
+    examples: ["sandbar ls", "sandbar ls --json", "sandbar ls --remote --provider daytona"],
     run: lsCommand,
+  },
+  {
+    name: "adopt",
+    summary: "Add a sandbox from the provider's listing to the store so other commands reach it",
+    usage: "sandbar adopt <id> [--name <name>]",
+    flags: {
+      name: {
+        type: "string",
+        value: "name",
+        description: "Store name (default: generated, like sb-1a2b3)",
+      },
+    },
+    passthrough: false,
+    remoteExit: false,
+    examples: ["sandbar ls --remote", "sandbar adopt 4f1c2a --name worker"],
+    run: adoptCommand,
   },
   {
     name: "inspect",
@@ -226,9 +267,9 @@ export const commands: readonly CommandSpec[] = [
   },
   {
     name: "image",
-    summary: "Build OCI images for providers that need it, and list or forget the builds",
+    summary: "Build OCI images for providers that need it, and list, delete or forget the builds",
     usage:
-      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls | inspect <name> | forget <name>",
+      "sandbar image build <oci-ref> [--name <name>] [--refresh] | ls [--remote] | inspect <name> | rm <name> [--force] | forget <name>",
     flags: {
       name: {
         type: "string",
@@ -236,6 +277,14 @@ export const commands: readonly CommandSpec[] = [
         description: "Record name for a build (default: from the reference, like python-3-12)",
       },
       refresh: { type: "boolean", description: "Build again even if this reference is recorded" },
+      remote: {
+        type: "boolean",
+        description: "List the images on the provider for this profile, not the local records",
+      },
+      force: {
+        type: "boolean",
+        description: "Delete a recorded image this CLI did not verifiably create",
+      },
     },
     passthrough: false,
     remoteExit: false,
@@ -243,6 +292,8 @@ export const commands: readonly CommandSpec[] = [
       "sandbar image build python:3.12 --provider e2b",
       "sandbar create --image python:3.12 --provider e2b",
       "sandbar image ls",
+      "sandbar image ls --remote --provider e2b",
+      "sandbar image rm python-3-12",
       "sandbar image forget python-3-12",
     ],
     run: imageCommand,

@@ -825,3 +825,73 @@ test("exec retains confirmed exit and captured bytes after a transport failure",
     await client.close();
   }
 });
+
+test("boxd lists org machines with unknown-ownership references that reopen", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const created = [await client.sandboxes.create(), await client.sandboxes.create()];
+    const external = crypto.randomUUID();
+    const template = fixture.machines.get(created[0]!.id)!;
+    fixture.machines.set(external, { ...template, vmId: external, name: "external" });
+    fixture.machines.set("not-a-uuid", { ...template, vmId: "not-a-uuid", status: "stopped" });
+    const foreign = crypto.randomUUID();
+    fixture.machines.set(foreign, { ...template, vmId: foreign, billingOrgId: "org-other" });
+    const before = fixture.calls.length;
+
+    const first = await client.sandboxes.list({ limit: 2 });
+    const second = await client.sandboxes.list({ cursor: first.nextCursor, limit: 2 });
+    expect(fixture.calls.slice(before).map((call) => call.method)).toEqual(["ListVms", "ListVms"]);
+    expect(first.coverage).toBe("provider-scope");
+    expect(first.nextCursor).toBe("2");
+    expect(second.nextCursor).toBeUndefined();
+
+    const items = [...first.items, ...second.items];
+
+    const expected = [...created.map((box) => box.id), external, "not-a-uuid"].sort((a, b) =>
+      a.localeCompare(b),
+    );
+
+    expect(items.map((item) => item.id)).toEqual(expected);
+    expect(items.find((item) => item.id === "not-a-uuid")).toEqual({
+      id: "not-a-uuid",
+      state: "stopped",
+      reference: null,
+    });
+
+    const listed = items.find((item) => item.id === external)!;
+    expect(listed.state).toBe("running");
+    expect(listed.reference).toMatchObject({ nativeId: external, ownership: "unknown" });
+    expect(listed.reference?.receipt).toBeUndefined();
+    expect((await client.sandboxes.get(listed.reference!)).id).toBe(external);
+
+    await expect(client.sandboxes.list({ cursor: "-1" })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("boxd declares create env unsupported and rejects it before any native call", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    expect((await client.capabilities()).createEnv).toBe(false);
+    const calls = fixture.calls.length;
+
+    for (const create of [client.sandboxes.create, client.sandboxes.submitCreate])
+      await expect(create({ env: { API_TOKEN: "fixture-env-value" } })).rejects.toMatchObject({
+        name: "UnsupportedFeatureError",
+        code: "UNSUPPORTED",
+        effect: "none",
+      });
+    expect(fixture.effects.create).toBe(0);
+    expect(fixture.calls.slice(calls).map((call) => call.method)).not.toContain("CreateVm");
+    expect(JSON.stringify(fixture.calls)).not.toContain("fixture-env-value");
+  } finally {
+    await client.close();
+  }
+});
