@@ -1,6 +1,7 @@
 ---
 import { Code } from "astro:components";
 import { oceanDriveCodeTheme } from "../ocean-drive-code-theme.mjs";
+import sdkPackage from "../../../../packages/sdk/package.json";
 import Logo from "../components/Logo.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import "../styles/tokens.css";
@@ -8,7 +9,7 @@ import "../styles/tokens.css";
 const title = "Sandbar | One SDK. Every sandbox.";
 
 const description =
-  "Sandbar is a typed TypeScript API for Daytona, E2B, boxd and Vercel sandboxes, with a public adapter API for other providers.";
+  "Sandbar is a typed TypeScript API for Daytona, E2B, boxd, Boat and Vercel sandboxes, with a public adapter API for other providers.";
 
 const fonts =
   "https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap";
@@ -17,7 +18,7 @@ const github = "https://github.com/pandemicsyn/sandbar";
 
 const providers = ["daytona", "e2b", "boxd", "vercel"];
 
-const install = "npm install sandbar-sdk @sandbar-sdk/e2b";
+const install = `npm install sandbar-sdk @sandbar-sdk/${providers[0]}`;
 
 const adapterExample = `// Inside your adapter's connect() method:
 // Authenticate the client and verify scope first.
@@ -112,7 +113,7 @@ const sunBands = [
             <div class="eyebrow"><span></span>Sandbox router for TypeScript</div>
             <h1>One SDK.<br />Every <span class="accent-word">sandbox.</span></h1>
             <p class="lede">
-              A typed API to create, run code in, and tear down sandboxes on Daytona, E2B, boxd and Vercel.
+              A typed API to create, run code in, and tear down sandboxes on Daytona, E2B, boxd, Boat and Vercel.
               Keep application workflows consistent while configuring each provider explicitly.
             </p>
             <div class="cta-stack">
@@ -120,11 +121,11 @@ const sunBands = [
                 <a class="btn btn-primary" href="/docs/">Get started →</a>
                 <a class="btn btn-secondary" href="/docs/guides/runnable-agent-examples/">Run an agent →</a>
               </div>
-              <button class="npm" type="button" data-copy={install} aria-label={`Copy ${install}`}>
-                <span class="prompt">$</span><span>{install}</span>
+              <button class="npm" type="button" data-copy={install} data-install aria-label={`Copy ${install}`}>
+                <span class="prompt">$</span><span data-install-text>{install}</span>
                 <span class="npm-state" data-copy-label>copy</span>
               </button>
-              <span class="release-note">v0.1.0 on npm · <a href="/docs/direct-quickstart/">Getting started</a></span>
+              <span class="release-note">v{sdkPackage.version} on npm · <a href="/docs/direct-quickstart/">Getting started</a></span>
             </div>
           </div>
 
@@ -221,6 +222,7 @@ const sunBands = [
             <li class="chip chip-daytona"><span></span>Daytona</li>
             <li class="chip chip-e2b"><span></span>E2B</li>
             <li class="chip chip-boxd"><span></span>boxd (exp)</li>
+            <li class="chip chip-boat"><span></span>Boat (exp)</li>
             <li class="chip chip-vercel"><span></span>Vercel</li>
             <li class="chip chip-modal"><span></span>Modal (exp)</li>
             <li class="chip chip-yours">+ your adapter</li>
@@ -379,6 +381,22 @@ const sunBands = [
         optionsNode.replaceChildren(...lines.flatMap((line, i) => (i ? ["\n", line] : [line])));
       }
 
+      // Keep the install command on the selected provider's package.
+      const installButton = document.querySelector<HTMLButtonElement>("[data-install]");
+
+      const installText = document.querySelector<HTMLElement>("[data-install-text]");
+
+      function renderInstall(provider: string) {
+        const command = `npm install sandbar-sdk @sandbar-sdk/${provider}`;
+
+        if (installButton) {
+          installButton.dataset.copy = command;
+          installButton.setAttribute("aria-label", `Copy ${command}`);
+        }
+
+        if (installText) installText.textContent = command;
+      }
+
       function setTyped(text: string) {
         document.querySelectorAll<HTMLElement>("[data-typed]").forEach((node) => (node.textContent = text));
         typedPlain.forEach((node) => (node.textContent = text));
@@ -403,6 +421,7 @@ const sunBands = [
         current = to;
         tabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.provider === to)));
         renderOptions(to);
+        renderInstall(to);
         carets.forEach((caret) => caret.classList.remove("idle"));
         setStatus("connecting…", "var(--sb-code-dim)", "");
 
@@ -1136,6 +1155,15 @@ const sunBands = [
       .chip-boxd span {
         border-radius: 2px;
         background: var(--sb-lav);
+      }
+      .chip-boat {
+        background: color-mix(in srgb, var(--sb-coral) 18%, var(--sb-surface));
+        color: var(--sb-ink);
+      }
+      .chip-boat span {
+        background: var(--sb-coral);
+        border-radius: 1px 1px 4px 4px;
+        clip-path: polygon(0 25%, 100% 25%, 80% 100%, 20% 100%);
       }
       .chip-vercel {
         background: color-mix(in srgb, var(--sb-aqua) 18%, var(--sb-surface));
