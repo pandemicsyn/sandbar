@@ -20,6 +20,46 @@ const providers = ["daytona", "e2b", "boxd", "vercel"];
 
 const install = `npm install sandbar-sdk @sandbar-sdk/${providers[0]}`;
 
+const cliInstall = "npm install -g @sandbar-sdk/cli";
+
+const skillInstall = "npx skills add pandemicsyn/sandbar --skill sandbar-cli -g";
+
+// One shell session per provider: only the setup line (and Daytona's snapshot) changes.
+const cliSessions = [
+  { provider: "e2b", env: "E2B_API_KEY=...", create: "", id: "i8mq2v0x7cz4" },
+  { provider: "daytona", env: "DAYTONA_API_KEY=... DAYTONA_TARGET=us", create: " --prepared daytona-small", id: "3f2c9a1e-5b7d" },
+  { provider: "boxd", env: "BOXD_API_KEY=... BOXD_ORG=... BOXD_NETWORK=internet", create: "", id: "bx_7kq2m9" },
+  { provider: "vercel", env: "VERCEL_TOKEN=... VERCEL_TEAM_ID=... VERCEL_PROJECT_ID=...", create: "", id: "sbx_x2Lq9Ma" },
+].map(({ provider, env, create, id }) => {
+  // Same layout as `sandbar ls`: columns padded to their widest cell, two spaces apart.
+  const rows = [
+    ["NAME", "STATE", "PROVIDER", "PROFILE", "ID", "CREATED"],
+    ["web", "running", provider, provider, id, "2026-10-19T09:41:07.312Z"],
+  ];
+
+  const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)));
+
+  const table = rows
+    .map((row) => row.map((cell, column) => cell.padEnd(widths[column])).join("  ").trimEnd())
+    .join("\n");
+
+  return {
+    provider,
+    lines: [
+      { cmd: `export SANDBAR_PROVIDER=${provider} ${env}` },
+      { cmd: `sandbar create --name web${create}` },
+      { out: "web" },
+      { cmd: "sandbar cp ./app.py web:/tmp/app.py" },
+      { cmd: "sandbar exec web -- python3 /tmp/app.py" },
+      { out: `hello from ${provider}` },
+      { cmd: "sandbar ls" },
+      { out: table },
+      { cmd: "sandbar rm web" },
+      { out: "web" },
+    ],
+  };
+});
+
 const adapterExample = `// Inside your adapter's connect() method:
 // Authenticate the client and verify scope first.
 return {
@@ -227,6 +267,72 @@ const sunBands = [
             <li class="chip chip-modal"><span></span>Modal (exp)</li>
             <li class="chip chip-yours">+ your adapter</li>
           </ul>
+        </div>
+      </section>
+
+      <section class="cli wrap" id="cli">
+        <div class="cli-head">
+          <div class="cli-copy">
+            <span class="cli-chip">@sandbar-sdk/cli</span>
+            <h2>Same sandboxes. <span>Straight from your shell.</span></h2>
+            <p>
+              <code>sandbar</code> creates, runs in and removes sandboxes on any provider with an adapter.
+              It never prompts, every command has a <code>--json</code> form, and exit codes say what to do next,
+              so your coding agent can drive it as easily as you can.
+            </p>
+            <div class="cli-links">
+              <a class="cli-link" href="/docs/cli/">Command line docs →</a>
+              <a class="cli-link" href="/docs/agents/skills/">Agent skills →</a>
+            </div>
+          </div>
+          <div class="cli-installs">
+            <div class="cli-install">
+              <span class="cli-install-label">Install the CLI</span>
+              <button class="npm" type="button" data-copy={cliInstall} aria-label={`Copy ${cliInstall}`}>
+                <span class="prompt">$</span><span>{cliInstall}</span>
+                <span class="npm-state" data-copy-label>copy</span>
+              </button>
+            </div>
+            <div class="cli-install">
+              <span class="cli-install-label">Teach your agent to use it</span>
+              <button class="npm" type="button" data-copy={skillInstall} aria-label={`Copy ${skillInstall}`}>
+                <span class="prompt">$</span><span>{skillInstall}</span>
+                <span class="npm-state" data-copy-label>copy</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="code-card cli-term" data-cli-sessions={JSON.stringify(cliSessions)}>
+          <div class="code-bar">
+            <span class="dot" style="background:var(--sb-pink)"></span>
+            <span class="dot" style="background:var(--sb-coral)"></span>
+            <span class="dot" style="background:var(--sb-aqua)"></span>
+            <span class="file">zsh — sandbar</span>
+            <div class="provider-tabs" role="group" aria-label="Provider">
+              {
+                cliSessions.map(({ provider }, index) => (
+                  <button type="button" data-cli-provider={provider} aria-pressed={index === 0 ? "true" : "false"}>
+                    {provider}
+                  </button>
+                ))
+              }
+            </div>
+          </div>
+          <pre class="code cli-screen" aria-label="Example: create a sandbox, run a script in it and remove it from the shell"><code data-cli-screen>{
+            cliSessions[0].lines.map((line) =>
+              "cmd" in line ? (
+                <span class="cli-line"><span class="prompt">$ </span>{line.cmd}{"\n"}</span>
+              ) : (
+                <span class="cli-line cli-out">{line.out}{"\n"}</span>
+              ),
+            )
+          }</code></pre>
+          <div class="code-status" aria-live="polite">
+            <span class="status-dot" data-cli-dot style="background:var(--sb-aqua)"></span>
+            <span class="status-text" data-cli-status>exit 0 · sandbox removed</span>
+            <span class="status-time" data-cli-time>via e2b</span>
+          </div>
         </div>
       </section>
 
@@ -476,6 +582,132 @@ const sunBands = [
       setTyped("");
 
       setTimeout(() => runHero("daytona", ""), motionOn() ? 900 : 0);
+
+      // CLI section: type each command, print its output, and replay when the provider changes.
+      const cliTerm = document.querySelector<HTMLElement>("[data-cli-sessions]");
+
+      const cliScreen = document.querySelector<HTMLElement>("[data-cli-screen]");
+
+      const cliTabs = document.querySelectorAll<HTMLButtonElement>("[data-cli-provider]");
+
+      const cliStatus = document.querySelector<HTMLElement>("[data-cli-status]");
+
+      const cliDot = document.querySelector<HTMLElement>("[data-cli-dot]");
+
+      const cliTime = document.querySelector<HTMLElement>("[data-cli-time]");
+
+      type CliLine = { cmd: string } | { out: string };
+
+      const cliSessions = new Map<string, CliLine[]>(
+        // SAFETY: the server renders data-cli-sessions from the cliSessions array in this file.
+        (JSON.parse(cliTerm?.dataset.cliSessions ?? "[]") as { provider: string; lines: CliLine[] }[]).map(
+          ({ provider, lines }) => [provider, lines],
+        ),
+      );
+
+      let cliTimers: ReturnType<typeof setTimeout>[] = [];
+
+      let cliCurrent = cliTabs[0]?.dataset.cliProvider ?? "e2b";
+
+      function setCliStatus(text: string, color: string, provider: string) {
+        if (cliStatus) cliStatus.textContent = text;
+
+        if (cliDot) cliDot.style.background = color;
+
+        if (cliTime) cliTime.textContent = `via ${provider}`;
+      }
+
+      function cliLine(line: CliLine) {
+        const node = document.createElement("span");
+        node.className = "cli-line";
+
+        if ("cmd" in line) {
+          const prompt = document.createElement("span");
+          prompt.className = "prompt";
+          prompt.textContent = "$ ";
+          node.append(prompt, document.createTextNode(""), "\n");
+        } else {
+          node.classList.add("cli-out");
+          node.append(`${line.out}\n`);
+        }
+
+        return node;
+      }
+
+      function playCli(provider: string) {
+        cliTimers.forEach(clearTimeout);
+        cliTimers = [];
+        cliCurrent = provider;
+        cliTabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.cliProvider === provider)));
+
+        const lines = cliSessions.get(provider) ?? [];
+
+        if (!cliScreen) return;
+
+        // Hold the full session's height so the page doesn't shift while lines appear.
+        if (!cliScreen.style.minHeight) cliScreen.style.minHeight = `${cliScreen.offsetHeight}px`;
+
+        if (!motionOn()) {
+          cliScreen.replaceChildren(
+            ...lines.map((line) => {
+              const node = cliLine(line);
+
+              if ("cmd" in line) node.childNodes[1]!.textContent = line.cmd;
+
+              return node;
+            }),
+          );
+          setCliStatus("exit 0 · sandbox removed", "var(--sb-aqua)", provider);
+
+          return;
+        }
+
+        cliScreen.replaceChildren();
+        setCliStatus("running…", "var(--sb-coral)", provider);
+
+        let t = 200;
+
+        for (const line of lines) {
+          const node = cliLine(line);
+
+          if ("cmd" in line) {
+            cliTimers.push(setTimeout(() => cliScreen.append(node), t));
+
+            for (let i = 1; i <= line.cmd.length; i++) {
+              t += 14;
+              cliTimers.push(setTimeout(() => (node.childNodes[1]!.textContent = line.cmd.slice(0, i)), t));
+            }
+
+            t += 300;
+          } else {
+            t += line.out.includes("\n") ? 350 : 450;
+            cliTimers.push(setTimeout(() => cliScreen.append(node), t));
+            t += 200;
+          }
+        }
+
+        cliTimers.push(setTimeout(() => setCliStatus("exit 0 · sandbox removed", "var(--sb-aqua)", provider), t));
+      }
+
+      cliTabs.forEach((tab) =>
+        tab.addEventListener("click", () => {
+          const name = tab.dataset.cliProvider;
+
+          if (name && name !== cliCurrent) playCli(name);
+        }),
+      );
+
+      // Play the session once the terminal scrolls into view; the static render covers no-JS readers.
+      if (cliTerm && "IntersectionObserver" in window) {
+        const observer = new IntersectionObserver((entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+
+          observer.disconnect();
+          playCli(cliCurrent);
+        }, { threshold: 0.35 });
+
+        observer.observe(cliTerm);
+      }
 
       // Lens flare: brightest mid-scroll through the hero, ghosts trail down-right.
       const hero = document.getElementById("hero");
@@ -1178,6 +1410,119 @@ const sunBands = [
         border: 1px dashed var(--sb-muted);
         color: var(--sb-muted);
         font-weight: 500;
+      }
+
+      /* Command line */
+      .cli {
+        padding-block: clamp(56px, 8vw, 104px) 0;
+      }
+      .cli-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+        gap: 32px 48px;
+        align-items: end;
+        margin-bottom: 36px;
+      }
+      .cli-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .cli-chip {
+        align-self: flex-start;
+        padding: 4px 12px;
+        border-radius: 999px;
+        background: var(--sb-aqua);
+        color: #1b1f3b;
+        font-family: var(--sb-font-mono);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .cli h2 {
+        margin: 0;
+        font-weight: 700;
+        font-size: clamp(1.8rem, 3.6vw, 2.8rem);
+        line-height: 1.1;
+        letter-spacing: -0.025em;
+        text-wrap: balance;
+      }
+      .cli h2 span {
+        color: var(--sb-muted);
+      }
+      .cli-copy p {
+        margin: 0;
+        max-width: 34em;
+        font-size: 17px;
+        color: var(--sb-muted);
+        text-wrap: pretty;
+      }
+      .cli-copy code {
+        white-space: nowrap;
+        font-family: var(--sb-font-mono);
+        font-size: 0.88em;
+        color: var(--sb-ink);
+      }
+      .cli-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 24px;
+      }
+      .cli-link {
+        font-weight: 600;
+        text-decoration: none;
+        border-bottom: 2px solid var(--sb-pink);
+      }
+      .cli-link:hover {
+        border-color: var(--sb-aqua);
+      }
+      .cli-installs {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        min-width: 0;
+      }
+      .cli-install {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+      }
+      .cli-install-label {
+        padding-left: 22px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--sb-muted);
+      }
+      .cli-install .npm {
+        width: 100%;
+        height: auto;
+        min-height: 48px;
+        padding-block: 8px;
+      }
+      .cli-install .npm > span:nth-child(2) {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .cli-term {
+        box-shadow: 0 30px 60px -20px rgba(23, 32, 61, 0.45);
+      }
+      .cli-screen {
+        --code-size: 13px;
+      }
+      .cli-out {
+        color: var(--sb-code-dim);
+      }
+      @media (max-width: 899px) {
+        .cli-head {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      @media (max-width: 639px) {
+        .cli-term .code-bar {
+          height: auto;
+          flex-wrap: wrap;
+          padding-block: 10px;
+        }
       }
 
       /* Features */
