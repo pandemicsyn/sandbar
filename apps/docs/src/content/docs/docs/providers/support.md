@@ -18,11 +18,12 @@ A live pass covers the image, region and network setting it ran with, not every 
 | [boxd](/docs/providers/boxd/)             | Experimental | 4 features, last run October 11, 2026 | Only the basics have run live: sandboxes, commands, files and reconnecting. Previews, pause/resume and volumes have not. |
 | [Vercel Sandbox](/docs/providers/vercel/) | Experimental | None yet                              | Not yet tested against the live Vercel service.                                                                          |
 | [Boat](/docs/providers/boat/)             | Experimental | None yet                              | Not yet tested against the live Boat service.                                                                            |
-| Modal                                     | Experimental | None yet                              | Not yet tested against the live Modal service, and not yet published to npm.                                             |
+| [Runloop](/docs/providers/runloop/)       | Experimental | None yet                              | Not yet tested against the live Runloop service; sign-ups are invitation only.                                           |
+| Modal                                     | Experimental | None yet                              | Not yet tested against the live Modal service.                                                                           |
 
 ## What has been tested live
 
-This table covers the supported providers. boxd, Vercel Sandbox, Boat, and Modal are experimental; see the notes above and each provider's guide. Each cell links to the recorded evidence and its fine print.
+This table covers the supported providers. boxd, Vercel Sandbox, Boat, Runloop, and Modal are experimental; see the notes above and each provider's guide. Each cell links to the recorded evidence and its fine print.
 
 | Feature                               | Daytona                                                                       | E2B                                                                         |
 | ------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------- |

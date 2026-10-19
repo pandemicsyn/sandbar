@@ -477,10 +477,17 @@ export const providerStatus: ProviderStatus[] = [
     note: "Not yet tested against the live Boat service.",
   },
   {
+    id: "runloop",
+    name: "Runloop",
+    href: "/docs/providers/runloop/",
+    experimental: true,
+    note: "Not yet tested against the live Runloop service; sign-ups are invitation only.",
+  },
+  {
     id: "modal",
     name: "Modal",
     experimental: true,
-    note: "Not yet tested against the live Modal service, and not yet published to npm.",
+    note: "Not yet tested against the live Modal service.",
   },
 ];
 

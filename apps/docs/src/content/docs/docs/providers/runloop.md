@@ -1,9 +1,9 @@
 ---
-title: Runloop (external, experimental)
-description: Use the external Runloop adapter for Devboxes with blocked egress, disk snapshots, suspend/resume and previews.
+title: Runloop
+description: Use the Runloop adapter for Devboxes with blocked egress, disk snapshots, suspend/resume and previews.
 ---
 
-The external `@sandbar-sdk/runloop` package implements the public Sandbar adapter interface for [Runloop](https://runloop.ai) Devboxes. Install it with `npm install sandbar-sdk @sandbar-sdk/runloop`; it is experimental, and Runloop sign-ups are currently by invitation only. Use Node 20+ or Bun. It calls the Runloop REST API v1 (`https://api.runloop.ai`) directly, with no native SDK dependency.
+The `@sandbar-sdk/runloop` package implements the public Sandbar adapter interface for [Runloop](https://runloop.ai) Devboxes. Install it with `npm install sandbar-sdk @sandbar-sdk/runloop`; it is experimental, and Runloop sign-ups are currently by invitation only. Use Node 20+ or Bun. It calls the Runloop REST API v1 (`https://api.runloop.ai`) directly, with no native SDK dependency.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";
