@@ -7,6 +7,18 @@ An adapter connects one provider's native API to Sandbar. Applications switch pr
 
 Official adapters and third-party adapters use the same public API from `@sandbar-sdk/adapter`. An adapter is a trusted installed package. Importing it registers nothing and performs no provider IO; the host supplies configuration and credentials when it connects.
 
+## Let your coding agent build it
+
+The `add-provider` agent skill walks a coding agent through this whole guide: researching the native API, the shared setup options, create and destroy, uncertain outcomes, conformance tests, packaging and docs. Install it with the [`skills`](https://github.com/vercel-labs/skills) installer, which supports Claude Code, Codex, Cursor and other agents:
+
+```sh
+npx skills add pandemicsyn/sandbar --skill add-provider
+```
+
+Run it in the repository where the adapter will live, then ask your agent to add the provider. Add `-g` to install it for every project instead. For an agent without a skill system, paste the [provider integration prompt](/docs/agents/build-a-provider/).
+
+## What you build
+
 An adapter package provides:
 
 - an adapter definition made with `defineAdapter`: a stable provider name, configuration and credential schemas, and a `connect` callback;
