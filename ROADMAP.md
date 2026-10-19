@@ -57,4 +57,4 @@ Vercel and boxd are implemented. Islo and Tensorlake remain candidates for the n
 
 Universal native parity and every optional extension above are not required. Select the next adapter only after that usability review. Accounting, the removed service/management UI and Rust are not on the delivery queue. Completed plans and audit records live in Git history; do not recreate parallel backlogs.
 
-Daytona and E2B remain first-class official integrations, distributed as separately installed `@sandbar-sdk/daytona` and `@sandbar-sdk/e2b` packages alongside the provider-neutral SDK. The lockstep release group includes the SDK, public adapter API, Daytona, E2B, boxd, Vercel, the CLI and experimental Boat and Modal.
+Daytona and E2B remain first-class official integrations, distributed as separately installed `@sandbar-sdk/daytona` and `@sandbar-sdk/e2b` packages alongside the provider-neutral SDK. The lockstep release group includes the SDK, public adapter API, Daytona, E2B, boxd, Vercel, the CLI and experimental Boat, Runloop and Modal.

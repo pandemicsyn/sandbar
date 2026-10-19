@@ -15,6 +15,7 @@
       "@sandbar-sdk/e2b",
       "@sandbar-sdk/boxd",
       "@sandbar-sdk/boat",
+      "@sandbar-sdk/runloop",
       "@sandbar-sdk/modal",
       "@sandbar-sdk/vercel",
       "@sandbar-sdk/cli"

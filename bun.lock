@@ -38,6 +38,7 @@
         "@sandbar-sdk/daytona": "workspace:*",
         "@sandbar-sdk/e2b": "workspace:*",
         "@sandbar-sdk/modal": "workspace:*",
+        "@sandbar-sdk/runloop": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
         "sandbar-sdk": "workspace:*",
         "satteri": "0.10.5",
@@ -78,6 +79,7 @@
         "@sandbar-sdk/daytona": "workspace:*",
         "@sandbar-sdk/e2b": "workspace:*",
         "@sandbar-sdk/modal": "workspace:*",
+        "@sandbar-sdk/runloop": "workspace:*",
         "@sandbar-sdk/vercel": "workspace:*",
         "@sandbar/provider-fake": "workspace:*",
       },
@@ -162,6 +164,17 @@
         "sandbar-sdk": "workspace:*",
       },
     },
+    "packages/providers/runloop": {
+      "name": "@sandbar-sdk/runloop",
+      "version": "0.6.0",
+      "dependencies": {
+        "@sandbar-sdk/adapter": "workspace:*",
+        "zod": "4.6.5",
+      },
+      "devDependencies": {
+        "sandbar-sdk": "workspace:*",
+      },
+    },
     "packages/providers/vercel": {
       "name": "@sandbar-sdk/vercel",
       "version": "0.6.0",
@@ -202,6 +215,7 @@
         "@sandbar-sdk/boxd": "workspace:*",
         "@sandbar-sdk/daytona": "workspace:*",
         "@sandbar-sdk/e2b": "workspace:*",
+        "@sandbar-sdk/runloop": "workspace:*",
         "@sandbar-sdk/vercel": "workspace:*",
       },
     },
@@ -774,6 +788,8 @@
     "@sandbar-sdk/e2b": ["@sandbar-sdk/e2b@workspace:packages/providers/e2b"],
 
     "@sandbar-sdk/modal": ["@sandbar-sdk/modal@workspace:packages/providers/modal"],
+
+    "@sandbar-sdk/runloop": ["@sandbar-sdk/runloop@workspace:packages/providers/runloop"],
 
     "@sandbar-sdk/vercel": ["@sandbar-sdk/vercel@workspace:packages/providers/vercel"],
 

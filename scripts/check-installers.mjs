@@ -33,6 +33,7 @@ for (const name of [
   "@sandbar-sdk/vercel",
   "@sandbar-sdk/boxd",
   "@sandbar-sdk/boat",
+  "@sandbar-sdk/runloop",
   "@sandbar-sdk/modal",
   "@sandbar-sdk/cli",
 ])
@@ -121,6 +122,14 @@ cases.push({
   overrides: [adapterName],
   runtime: `import { boatAdapter } from "@sandbar-sdk/boat"; if (boatAdapter.name !== "boat") throw Error("Unexpected adapter");`,
   types: `import { boatAdapter } from "@sandbar-sdk/boat"; const name: string = boatAdapter.name; void name;`,
+});
+
+cases.push({
+  name: "runloop",
+  packageName: "@sandbar-sdk/runloop",
+  overrides: [adapterName],
+  runtime: `import { runloopAdapter } from "@sandbar-sdk/runloop"; if (runloopAdapter.name !== "runloop") throw Error("Unexpected adapter");`,
+  types: `import { runloopAdapter } from "@sandbar-sdk/runloop"; const name: string = runloopAdapter.name; void name;`,
 });
 
 cases.push({
