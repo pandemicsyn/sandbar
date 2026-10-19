@@ -1,6 +1,7 @@
 ---
 import { Code } from "astro:components";
 import { oceanDriveCodeTheme } from "../ocean-drive-code-theme.mjs";
+import sdkPackage from "../../../../packages/sdk/package.json";
 import Logo from "../components/Logo.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import "../styles/tokens.css";
@@ -17,7 +18,7 @@ const github = "https://github.com/pandemicsyn/sandbar";
 
 const providers = ["daytona", "e2b", "boxd", "vercel"];
 
-const install = "npm install sandbar-sdk @sandbar-sdk/e2b";
+const install = `npm install sandbar-sdk @sandbar-sdk/${providers[0]}`;
 
 const adapterExample = `// Inside your adapter's connect() method:
 // Authenticate the client and verify scope first.
@@ -120,11 +121,11 @@ const sunBands = [
                 <a class="btn btn-primary" href="/docs/">Get started →</a>
                 <a class="btn btn-secondary" href="/docs/guides/runnable-agent-examples/">Run an agent →</a>
               </div>
-              <button class="npm" type="button" data-copy={install} aria-label={`Copy ${install}`}>
-                <span class="prompt">$</span><span>{install}</span>
+              <button class="npm" type="button" data-copy={install} data-install aria-label={`Copy ${install}`}>
+                <span class="prompt">$</span><span data-install-text>{install}</span>
                 <span class="npm-state" data-copy-label>copy</span>
               </button>
-              <span class="release-note">v0.1.0 on npm · <a href="/docs/direct-quickstart/">Getting started</a></span>
+              <span class="release-note">v{sdkPackage.version} on npm · <a href="/docs/direct-quickstart/">Getting started</a></span>
             </div>
           </div>
 
@@ -380,6 +381,22 @@ const sunBands = [
         optionsNode.replaceChildren(...lines.flatMap((line, i) => (i ? ["\n", line] : [line])));
       }
 
+      // Keep the install command on the selected provider's package.
+      const installButton = document.querySelector<HTMLButtonElement>("[data-install]");
+
+      const installText = document.querySelector<HTMLElement>("[data-install-text]");
+
+      function renderInstall(provider: string) {
+        const command = `npm install sandbar-sdk @sandbar-sdk/${provider}`;
+
+        if (installButton) {
+          installButton.dataset.copy = command;
+          installButton.setAttribute("aria-label", `Copy ${command}`);
+        }
+
+        if (installText) installText.textContent = command;
+      }
+
       function setTyped(text: string) {
         document.querySelectorAll<HTMLElement>("[data-typed]").forEach((node) => (node.textContent = text));
         typedPlain.forEach((node) => (node.textContent = text));
@@ -404,6 +421,7 @@ const sunBands = [
         current = to;
         tabs.forEach((tab) => tab.setAttribute("aria-pressed", String(tab.dataset.provider === to)));
         renderOptions(to);
+        renderInstall(to);
         carets.forEach((caret) => caret.classList.remove("idle"));
         setStatus("connecting…", "var(--sb-code-dim)", "");
 
