@@ -1,6 +1,6 @@
 import { Sandbar, type DirectConnectOptions, type AdapterSandbox } from "sandbar-sdk";
 import { daytona } from "@sandbar-sdk/daytona";
-import { acme } from "./acme-adapter";
+import { acmeAdapter } from "./acme-adapter";
 
 const options: DirectConnectOptions = { cleanup: { storage: "allow-unconfirmed" } };
 
@@ -10,7 +10,7 @@ export function connectDaytona(config: Parameters<typeof daytona>[0]) {
 
 export function connectExplicit() {
   return Sandbar.connect({
-    adapter: acme,
+    adapter: acmeAdapter,
     config: { region: "us" },
     credentials: { token: "example" },
     ...options,
