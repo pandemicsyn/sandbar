@@ -25,7 +25,7 @@ The SDK shares adapter validation, scope checks, binary results and mutation unc
 | `packages/provider-spi` | Private internal driver types/helpers; not the public adapter authoring surface |
 | `apps/docs` | Astro/Starlight public documentation and executable examples |
 
-Daytona, E2B, boxd and Vercel use separately installed packages and the public adapter API. boxd retains experimental support status; experimental Modal is outside the initial release group. The fake provider is a deterministic fixture. Provider availability and guarantees are documented in each provider's README and [qualification evidence](../packages/sdk-qualification/provider-qualification/README.md). New providers use the same public adapter API.
+Daytona, E2B, boxd and Vercel use separately installed packages and the public adapter API. boxd retains experimental support status; experimental Modal joined the release group in 0.7.0. The fake provider is a deterministic fixture. Provider availability and guarantees are documented in each provider's README and [qualification evidence](../packages/sdk-qualification/provider-qualification/README.md). New providers use the same public adapter API.
 
 ## State and recovery
 

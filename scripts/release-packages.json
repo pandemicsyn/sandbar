@@ -6,6 +6,7 @@
   "packages/providers/boxd",
   "packages/providers/boat",
   "packages/providers/runloop",
+  "packages/providers/modal",
   "packages/providers/vercel",
   "packages/cli"
 ]
