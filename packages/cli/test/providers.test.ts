@@ -14,6 +14,7 @@ beforeEach(async () => {
   await mkdir(scope, { recursive: true });
   await symlink(join(import.meta.dir, "..", "..", "providers", "boxd"), join(scope, "boxd"));
   await symlink(join(import.meta.dir, "..", "..", "providers", "boat"), join(scope, "boat"));
+  await symlink(join(import.meta.dir, "..", "..", "providers", "runloop"), join(scope, "runloop"));
 });
 
 afterEach(async () => {
@@ -58,4 +59,32 @@ test("environment-only Boat setup names and binds its required network choice", 
   );
 
   expect(bound.name).toBe("boat");
+});
+
+test("environment-only Runloop setup needs only a key and can opt into internet egress", async () => {
+  const env = { HOME: home, RUNLOOP_API_KEY: "key" };
+
+  expect(missingEnv(descriptor("runloop")!, env)).toEqual([]);
+  expect(
+    resolveProfile({ provider: "runloop" }, await loadConfig(undefined, env), env).config,
+  ).toEqual({});
+
+  const ready = { ...env, RUNLOOP_NETWORK: "internet" };
+
+  const profile = resolveProfile(
+    { provider: "runloop" },
+    await loadConfig(undefined, ready),
+    ready,
+  );
+
+  expect(profile.config).toEqual({ network: "internet" });
+
+  const bound = await loadAdapter(
+    profile,
+    home,
+    ready,
+    new SecretReader(ready, new AbortController().signal),
+  );
+
+  expect(bound.name).toBe("runloop");
 });

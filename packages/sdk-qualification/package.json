@@ -17,6 +17,7 @@
     "@sandbar-sdk/e2b": "workspace:*",
     "@sandbar-sdk/boxd": "workspace:*",
     "@sandbar-sdk/boat": "workspace:*",
+    "@sandbar-sdk/runloop": "workspace:*",
     "@sandbar-sdk/vercel": "workspace:*"
   }
 }
