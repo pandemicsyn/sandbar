@@ -77,6 +77,15 @@ export const providers: readonly ProviderDescriptor[] = [
     },
   },
   {
+    id: "runloop",
+    module: "@sandbar-sdk/runloop",
+    export: "runloopAdapter",
+    experimental: true,
+    credentials: { apiKey: "RUNLOOP_API_KEY" },
+    // Egress defaults to blocked; RUNLOOP_NETWORK=internet opts out.
+    config: { network: { env: "RUNLOOP_NETWORK", required: false } },
+  },
+  {
     id: "vercel",
     module: "@sandbar-sdk/vercel",
     export: "vercel",
