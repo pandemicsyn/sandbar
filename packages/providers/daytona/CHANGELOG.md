@@ -1,5 +1,20 @@
 # @sandbar-sdk/daytona
 
+## 0.6.0
+
+### Minor Changes
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`22e06ed`](https://github.com/pandemicsyn/sandbar/commit/22e06ed1fc0275fd68fd959ea4ece091f4bed180) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandboxes.create({ env })` sets environment variables for every command, process and terminal in the sandbox, including after reopening; a per-call `env` overrides a name. Daytona, E2B and Vercel map it to their native create-time environment. Adapters opt in with `supports.createEnv`, reported as `capabilities().createEnv`; elsewhere (boxd) `create({ env })` rejects with `UnsupportedFeatureError` before allocating anything. Values are never saved in recovery references or tokens, and never appear in telemetry or error messages.
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`7fc61f8`](https://github.com/pandemicsyn/sandbar/commit/7fc61f8a36bd7ec7973546d630d4b567bb0cfdbc) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Inspect, list and delete prepared images: Daytona maps native snapshots and E2B maps templates. Deletion refuses public or shared images, captured sandbox snapshots and images that sandboxes or warm pools still use before sending one unreplayed native delete. Built images now report a `reference` with verified ownership when the build's own request created them.
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`3a8c047`](https://github.com/pandemicsyn/sandbar/commit/3a8c04763ad7804f689c00f355683e235bc00206) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `sandboxes.list({ cursor?, limit? })`: a bounded page of sandboxes with `id`, `state` and a `reference` that `sandboxes.get()` reopens, plus `coverage` (`provider-scope` or `sandbar-managed`), matching `snapshots.list()` and `volumes.list()`. Adapters implement the optional `sandboxList` hook and return `reference: null` when native evidence cannot verify identity; listed references never claim ownership, generation or creation receipts the provider does not show. Daytona and E2B list Sandbar-created sandboxes with `verified-created` references; boxd and Vercel list with `unknown` ownership. `operations.inventory()` is unchanged and is derived from `sandboxList` when an adapter only implements the new hook.
+
+### Patch Changes
+
+- Updated dependencies [[`22e06ed`](https://github.com/pandemicsyn/sandbar/commit/22e06ed1fc0275fd68fd959ea4ece091f4bed180), [`7fc61f8`](https://github.com/pandemicsyn/sandbar/commit/7fc61f8a36bd7ec7973546d630d4b567bb0cfdbc), [`3a8c047`](https://github.com/pandemicsyn/sandbar/commit/3a8c04763ad7804f689c00f355683e235bc00206)]:
+  - @sandbar-sdk/adapter@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

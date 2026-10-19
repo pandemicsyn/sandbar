@@ -1,5 +1,15 @@
 # @sandbar-sdk/adapter
 
+## 0.6.0
+
+### Minor Changes
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`22e06ed`](https://github.com/pandemicsyn/sandbar/commit/22e06ed1fc0275fd68fd959ea4ece091f4bed180) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandboxes.create({ env })` sets environment variables for every command, process and terminal in the sandbox, including after reopening; a per-call `env` overrides a name. Daytona, E2B and Vercel map it to their native create-time environment. Adapters opt in with `supports.createEnv`, reported as `capabilities().createEnv`; elsewhere (boxd) `create({ env })` rejects with `UnsupportedFeatureError` before allocating anything. Values are never saved in recovery references or tokens, and never appear in telemetry or error messages.
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`7fc61f8`](https://github.com/pandemicsyn/sandbar/commit/7fc61f8a36bd7ec7973546d630d4b567bb0cfdbc) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `client.images.get()`, `client.images.list()` and image handles with `inspect()`, `delete()` and `submitDelete()`. `images.build()` results now include `reference`, an image resource reference whose ownership is `verified-created` only when the adapter proved the build created it. Adapters opt in with the `imageInspect`, `imageList`/`imageListCoverage` and `imageDelete` hooks, and `capabilities().imageManagement` reports what a connection supports; a missing hook rejects with `UNSUPPORTED`. Image deletion follows the snapshot deletion rules: scope checks, no deletion of borrowed images as a side effect, `OUTCOME_UNKNOWN` on an unconfirmed result and no replay.
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`3a8c047`](https://github.com/pandemicsyn/sandbar/commit/3a8c04763ad7804f689c00f355683e235bc00206) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `sandboxes.list({ cursor?, limit? })`: a bounded page of sandboxes with `id`, `state` and a `reference` that `sandboxes.get()` reopens, plus `coverage` (`provider-scope` or `sandbar-managed`), matching `snapshots.list()` and `volumes.list()`. Adapters implement the optional `sandboxList` hook and return `reference: null` when native evidence cannot verify identity; listed references never claim ownership, generation or creation receipts the provider does not show. Daytona and E2B list Sandbar-created sandboxes with `verified-created` references; boxd and Vercel list with `unknown` ownership. `operations.inventory()` is unchanged and is derived from `sandboxList` when an adapter only implements the new hook.
+
 ## 0.5.0
 
 No changes in this release.
