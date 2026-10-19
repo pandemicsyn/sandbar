@@ -1,7 +1,12 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { officialSupport, renderSupportMatrix } from "./support";
+import {
+  officialSupport,
+  renderSupportDetails,
+  renderSupportMatrix,
+  renderSupportOverview,
+} from "./support";
 import { loadProviderProfile } from "./profile";
 import { parseReport, renderLiveMatrix } from "./report";
 
@@ -24,11 +29,10 @@ const metadata = external ? [external.support] : officialSupport;
 
 const directory = option("--results") ?? fileURLToPath(new URL("./results/", import.meta.url));
 
-const output = fileURLToPath(
-  new URL(
-    "../../../apps/docs/src/content/docs/docs/providers/live-qualification.md",
-    import.meta.url,
-  ),
+const output = fileURLToPath(new URL("./LIVE-EVIDENCE.md", import.meta.url));
+
+const supportPage = fileURLToPath(
+  new URL("../../../apps/docs/src/content/docs/docs/providers/support.md", import.meta.url),
 );
 
 const files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
@@ -51,6 +55,27 @@ const reports = await Promise.all(
   }),
 );
 
+// Experimental official adapters keep their results beside their own packages.
+const packageReports = external
+  ? []
+  : await Promise.all(
+      ["boxd", "vercel"].map(async (name) =>
+        parseReport(
+          JSON.parse(
+            await readFile(
+              fileURLToPath(
+                new URL(
+                  `../../providers/${name}/qualification/results/${name}.json`,
+                  import.meta.url,
+                ),
+              ),
+              "utf8",
+            ),
+          ),
+        ),
+      ),
+    );
+
 const outputDirectory = option("--output");
 
 if (external && !outputDirectory) throw new Error("External metadata requires --output directory");
@@ -58,15 +83,25 @@ if (external && !outputDirectory) throw new Error("External metadata requires --
 const targets = [
   [
     outputDirectory ? join(outputDirectory, "live-qualification.md") : output,
-    renderLiveMatrix(
-      reports,
-      Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
-      external ? "./support.md" : undefined,
-    ),
+    external
+      ? renderLiveMatrix(
+          reports,
+          Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
+          "./support.md",
+        )
+      : // The repository copy has no docs frontmatter; it links back to the published overview.
+        renderLiveMatrix(
+          reports,
+          Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
+          "https://sandbarsdk.dev/docs/providers/support/",
+        ).replace(/^---\n[\s\S]*?\n---\n\n/, "# Live test evidence\n\n") +
+        `\n${renderSupportDetails(reports, metadata)}`,
   ],
   [
-    outputDirectory ? join(outputDirectory, "support.md") : join(output, "..", "support.md"),
-    renderSupportMatrix(reports, metadata),
+    outputDirectory ? join(outputDirectory, "support.md") : supportPage,
+    external
+      ? renderSupportMatrix(reports, metadata)
+      : renderSupportOverview([...reports, ...packageReports], metadata),
   ],
 ] as const;
 

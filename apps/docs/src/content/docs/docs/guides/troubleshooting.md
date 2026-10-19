@@ -33,7 +33,7 @@ Check that credentials are available to the server process, then check the adapt
 
 To use Daytona's organization-managed restrictions, set `network: "daytona-default"` in adapter setup (or `network: "internet"` on Tier 3 and above). Omitted create and restore policies inherit that value; you do not need to repeat it on each call.
 
-Omitting the policy during setup selects strict `blocked`, which requires verified organization eligibility and can be unavailable. An explicit per-call policy must match the connection's policy. Sandbar does not silently relax it. See [Daytona networking](/docs/providers/daytona/#choose-the-policy-deliberately).
+Omitting the policy during setup selects `daytona-default`. Strict `blocked` is an explicit opt-in that requires verified organization eligibility and can be unavailable. An explicit per-call policy must match the connection's policy. Sandbar does not silently relax it. See [Daytona networking](/docs/providers/daytona/#network-policy).
 
 ## A command cannot run
 

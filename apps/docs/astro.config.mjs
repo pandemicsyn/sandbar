@@ -19,6 +19,7 @@ const openSearchFromQuery = `addEventListener("DOMContentLoaded", () => {
 });`;
 
 export default defineConfig({
+  redirects: { "/docs/providers/live-qualification/": "/docs/providers/support/" },
   site: "https://sandbarsdk.dev",
   output: "static",
   // The tab renderer uses a native parser; keep its platform binding beside its package.
@@ -113,11 +114,10 @@ export default defineConfig({
             { slug: "docs/providers/support" },
             { slug: "docs/providers/daytona" },
             { slug: "docs/providers/e2b" },
-            { slug: "docs/providers/boxd", label: "boxd", badge: "exp" },
             { slug: "docs/providers/boat", label: "Boat", badge: "exp" },
+            { slug: "docs/providers/boxd", label: "boxd", badge: "exp" },
             { slug: "docs/providers/runloop", label: "Runloop", badge: "exp" },
             { slug: "docs/providers/vercel", badge: "exp" },
-            { slug: "docs/providers/live-qualification", label: "Live test evidence" },
           ],
         },
         {

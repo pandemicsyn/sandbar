@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { networkProbeId, networkSampleSchema } from "./network-probe";
-import { officialSupport, renderSupportMatrix } from "./support";
+import {
+  officialSupport,
+  providerStatus,
+  renderSupportDetails,
+  renderSupportMatrix,
+  renderSupportOverview,
+} from "./support";
 import { renderLiveMatrix, parseReport, type QualificationRecord } from "./report";
 
 function record(
@@ -266,4 +272,49 @@ test("captured execution never qualifies streaming, and streaming evidence has i
   expect(render([{ ...stdin, mode: "packed" }])).toContain(
     "Conditional · not-run](#e2b-finiteStdin)",
   );
+});
+
+function overview(records: QualificationRecord[]) {
+  return renderSupportOverview([parseReport({ schemaVersion: 1, records })]);
+}
+
+const ociCell = (text: string) => `| Build images | ${text} |`;
+
+test("overview cells report live results only, never fixture or packed passes", () => {
+  const compact = (page: string) => page.replace(/ +\|/g, " |").replace(/\| +/g, "| ");
+
+  expect(compact(overview([record("passed")]))).toContain(ociCell("Tested live"));
+  expect(compact(overview([record("passed"), { ...record("failed") }]))).toContain(
+    ociCell("**Failed live test**"),
+  );
+  expect(compact(overview([record("passed", "fixture"), record("passed", "packed")]))).toContain(
+    ociCell("Not tested live"),
+  );
+  expect(compact(overview([{ ...record("passed"), runCleanup: "incomplete" }]))).toContain(
+    ociCell("Live test blocked"),
+  );
+  expect(compact(overview([]))).toContain("| Public HTTP previews | Not supported |");
+});
+
+test("overview provider rows count live-passed features and mark experimental providers", () => {
+  const page = overview([record("passed")]);
+  const row = (name: string) => page.split("\n").find((line) => line.includes(`[${name}](`))!;
+
+  expect(row("Daytona")).toMatch(/Supported +\| 1 feature, last run September 29, 2026/);
+  expect(row("E2B")).toMatch(/Supported +\| None yet/);
+  expect(row("Boat")).toMatch(/Experimental +\| None yet/);
+  expect(
+    providerStatus.filter((status) => !status.experimental).map((status) => status.id),
+  ).toEqual(officialSupport.map((profile) => profile.id));
+});
+
+test("official declarations and caveats move to the evidence page with stable anchors", () => {
+  const details = renderSupportDetails([
+    parseReport({ schemaVersion: 1, records: [record("passed")] }),
+  ]);
+
+  expect(details).toContain("[Conditional · passed at aaaaaaaa](#daytona-oci)");
+  expect(details).toContain('<a id="daytona-oci"></a>');
+  expect(details).toContain("### Daytona caveats");
+  expect(details).not.toContain("---\ntitle:");
 });
