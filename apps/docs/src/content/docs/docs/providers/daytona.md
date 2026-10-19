@@ -47,7 +47,7 @@ Set `DAYTONA_API_KEY` on the server. `connect` reads the key's organization and 
 | `lifecycle.suspension.preserve` | `filesystem`      | `filesystem+memory` rejects `UNSUPPORTED` at connect.                                                                                                                                  |
 | `preview.access`                | `protected`       | `public` rejects `UNSUPPORTED` at connect, because Daytona would publish every port of the sandbox.                                                                                    |
 | `snapshots.restartAfterCapture` | `true`            | Restart a running source after `snapshot()`. `false` leaves it stopped.                                                                                                                |
-| `resources`                     | none              | Minimum `{ vcpus, memoryMiB }`. OCI builds use it; a prepared snapshot must already meet it. Not accepted by `daytona()`; pass it in adapter `config` with `daytonaAdapter`.           |
+| `resources`                     | none              | Minimum `{ vcpus, memoryMiB }`. OCI builds use it; a prepared snapshot must already meet it.                                                                                           |
 
 Create-time `env` is sent as native sandbox environment variables, so it applies to every command, including after reopening; per-call `env` overrides a name. Values are not stored in references and are redacted from Daytona error text. Create-time `labels` are supported. An invalid image override never falls back to the default or starts an unrequested build.
 

@@ -1,5 +1,5 @@
 import { createDaytonaAdapter } from "./index";
-import type { ImageInput } from "@sandbar-sdk/adapter";
+import type { ImageInput, ResourceMinimums } from "@sandbar-sdk/adapter";
 import { bindAdapter, type BoundAdapter } from "@sandbar-sdk/adapter";
 
 /** First-party Daytona adapter. Configure `network` once here; omitted create calls use it. Defaults to provider-managed daytona-default egress. */
@@ -16,6 +16,8 @@ export function daytona(options: {
     suspension?: { preserve: "filesystem" | "filesystem+memory" };
   };
   snapshots?: { restartAfterCapture?: boolean };
+  /** Minimum `{ vcpus, memoryMiB }`; OCI builds use it and prepared snapshots must meet it. */
+  resources?: ResourceMinimums;
   /** Outbound network: `blocked`, `internet`, or Daytona's tier-dependent `daytona-default` (default). */
   network?: "blocked" | "internet" | "daytona-default";
   /** @deprecated Use `network`. */
@@ -28,6 +30,7 @@ export function daytona(options: {
     lifecycle: options.lifecycle,
     preview: options.preview,
     snapshots: options.snapshots,
+    resources: options.resources,
     network: options.network,
     networkPolicy: options.networkPolicy,
   };

@@ -30,17 +30,17 @@ Set `E2B_API_KEY` on the server. `E2B_API_ID` is not required and is not a team 
 
 ## Setup
 
-| Setting                     | Default   | Notes                                                                                                                                                                                               |
-| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apiKey`                    | required  | E2B API key.                                                                                                                                                                                        |
-| `teamId`                    | none      | Verified team scope. Needed to rotate keys and still reopen saved sandboxes and snapshots.                                                                                                          |
-| `templateId`                | `base`    | E2B's public `base` template, or an owned template ID or name. Names must be untagged or use `:default`; other tags and public aliases are unsupported.                                             |
-| `network`                   | `blocked` | `blocked` or `internet`, mapped to E2B's internet-access setting. Deprecated alias: `networkPolicy` (set one, not both). See [network and previews](#network-and-previews).                         |
-| `timeoutSeconds`            | 900       | Native sandbox lifetime, 60 to 86,400 seconds. E2B kills the sandbox when it expires.                                                                                                               |
-| `lifecycle.lifetimeSeconds` | none      | Initial lifetime and default `renew()` window, up to 86,400 seconds; values under 60 become 60. Set this or `timeoutSeconds`, not both.                                                             |
-| `lifecycle.suspension`      | none      | `{ preserve: "filesystem" }` or `{ preserve: "filesystem+memory" }`. Both are met by E2B's memory pause.                                                                                            |
-| `preview.access`            | `public`  | `public` opens the sandbox to inbound traffic. `protected` keeps it closed, and `preview()` then rejects `UNSUPPORTED`.                                                                             |
-| `resources`                 | none      | Minimum `{ vcpus, memoryMiB }`. OCI images are built at that size; a prepared template must already meet it, so `base` is rejected. Not accepted by `e2b()`: pass it as `config` with `e2bAdapter`. |
+| Setting                     | Default   | Notes                                                                                                                                                                       |
+| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiKey`                    | required  | E2B API key.                                                                                                                                                                |
+| `teamId`                    | none      | Verified team scope. Needed to rotate keys and still reopen saved sandboxes and snapshots.                                                                                  |
+| `templateId`                | `base`    | E2B's public `base` template, or an owned template ID or name. Names must be untagged or use `:default`; other tags and public aliases are unsupported.                     |
+| `network`                   | `blocked` | `blocked` or `internet`, mapped to E2B's internet-access setting. Deprecated alias: `networkPolicy` (set one, not both). See [network and previews](#network-and-previews). |
+| `timeoutSeconds`            | 900       | Native sandbox lifetime, 60 to 86,400 seconds. E2B kills the sandbox when it expires.                                                                                       |
+| `lifecycle.lifetimeSeconds` | none      | Initial lifetime and default `renew()` window, up to 86,400 seconds; values under 60 become 60. Set this or `timeoutSeconds`, not both.                                     |
+| `lifecycle.suspension`      | none      | `{ preserve: "filesystem" }` or `{ preserve: "filesystem+memory" }`. Both are met by E2B's memory pause.                                                                    |
+| `preview.access`            | `public`  | `public` opens the sandbox to inbound traffic. `protected` keeps it closed, and `preview()` then rejects `UNSUPPORTED`.                                                     |
+| `resources`                 | none      | Minimum `{ vcpus, memoryMiB }`. OCI images are built at that size; a prepared template must already meet it, so `base` is rejected.                                         |
 
 `create({ env })` sets E2B's sandbox environment, which applies to every command and process, including after reopening; per-call `env` overrides a name. Values are not saved in recovery references and are redacted from E2B error text. `labels` are stored as E2B metadata; Sandbar's reserved keys reject `INVALID_ARGUMENT`. A per-call `environment` (image) overrides `templateId` for that call, and an invalid or unavailable override never falls back to `base`. `region` and mounts reject `UNSUPPORTED`.
 

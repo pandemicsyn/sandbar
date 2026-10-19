@@ -1,5 +1,5 @@
 import { createE2BAdapter } from "./index";
-import { bindAdapter, type BoundAdapter } from "@sandbar-sdk/adapter";
+import { bindAdapter, type BoundAdapter, type ResourceMinimums } from "@sandbar-sdk/adapter";
 
 /** E2B adapter with API-key scope and default base template; optional verified team scope. */
 export function e2b(options: {
@@ -16,6 +16,8 @@ export function e2b(options: {
     lifetimeSeconds?: number;
     suspension?: { preserve: "filesystem" | "filesystem+memory" };
   };
+  /** Minimum `{ vcpus, memoryMiB }`; OCI builds use it and prepared templates must meet it. */
+  resources?: ResourceMinimums;
 }): BoundAdapter {
   return bindAdapter(
     createE2BAdapter(),
@@ -27,6 +29,7 @@ export function e2b(options: {
       timeoutSeconds: options.timeoutSeconds,
       lifecycle: options.lifecycle,
       preview: options.preview,
+      resources: options.resources,
     },
     { apiKey: options.apiKey },
   );
