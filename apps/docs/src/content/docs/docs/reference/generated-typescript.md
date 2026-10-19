@@ -95,6 +95,7 @@ Import from `sandbar-sdk`.
 | `RenewRequest`                | type      |
 | `RenewResult`                 | type      |
 | `ResourceKind`                | re-export |
+| `ResourceMinimums`            | type      |
 | `ResourceReference`           | re-export |
 | `RestoreCapabilities`         | type      |
 | `RestoreInput`                | type      |
@@ -110,6 +111,7 @@ Import from `sandbar-sdk`.
 | `SandboxListEntry`            | type      |
 | `SandboxListInput`            | type      |
 | `SandboxReference`            | type      |
+| `SandboxResources`            | type      |
 | `SandboxScopeCallbackOutcome` | type      |
 | `SandboxScopeOptions`         | type      |
 | `SandboxState`                | type      |

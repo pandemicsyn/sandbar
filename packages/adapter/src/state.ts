@@ -185,6 +185,19 @@ export const SandboxInfoSchema = z.strictObject({
     }),
     UnknownFact,
   ]),
+  /** Observations recorded before sizes were reported carry no resources fact. */
+  resources: z
+    .discriminatedUnion("status", [
+      z.strictObject({
+        status: z.literal("known"),
+        value: z.strictObject({
+          vcpus: z.number().positive().finite(),
+          memoryMiB: z.number().int().positive(),
+        }),
+      }),
+      UnknownFact,
+    ])
+    .optional(),
 });
 
 export const SnapshotProfile = z.strictObject({
@@ -1042,6 +1055,11 @@ export interface SandboxInfo {
   idleStop: Fact<{ seconds: number; action: "stop" | "suspend" } | null>;
   retention: Fact<{ autoDeleteAfterStoppedSeconds: number | null }>;
   execution: Fact<{ nativeId: string }>;
+  /**
+   * The native size this sandbox actually has, which may exceed the configured minimums. Optional
+   * for adapters; the SDK reports it as unknown when an adapter leaves it out.
+   */
+  resources?: Fact<import("./sizing").SandboxResources>;
 }
 
 /** Native creation selectors only; this reference carries no past observations. */
@@ -1078,6 +1096,7 @@ export function unknownSandboxFacts() {
     idleStop: { status: "unknown" as const, reason: "Native idle policy is unavailable" },
     retention: { status: "unknown" as const, reason: "Native retention is unavailable" },
     execution: { status: "unknown" as const, reason: "Native execution identity is unavailable" },
+    resources: { status: "unknown" as const, reason: "Native size is unavailable" },
   };
 }
 

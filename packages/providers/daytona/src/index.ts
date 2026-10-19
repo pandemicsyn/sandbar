@@ -60,6 +60,9 @@ const Region = z.object({
 
 const Snapshot = z.object({
   general: z.boolean().default(false),
+  /** Native size fixed at build: CPU cores and memory in GiB. */
+  cpu: z.number().optional(),
+  mem: z.number().optional(),
   id: z.string().min(1),
   name: z.string().optional(),
   imageName: z.string().optional(),
@@ -122,8 +125,14 @@ const Input = z.strictObject({
     networkPolicy: z.enum(["blocked", "internet", "daytona-default"]).default("daytona-default"),
     ttlMinutes: z.coerce.number().int().min(1).safe().default(15),
     autoStopMinutes: z.coerce.number().int().min(0).max(1440).default(0),
+    /** Minimum size for built snapshots and prepared ones. */
+    minVcpus: z.coerce.number().positive().finite().optional(),
+    minMemoryMiB: z.coerce.number().int().positive().safe().optional(),
   }),
 });
+
+/** Native snapshot build size fields: CPU cores and memory in GiB. */
+type SnapshotBuildSize = { cpu?: number; memory?: number };
 
 export type DaytonaEndpointPair = { apiUrl: string; toolboxOrigin: string };
 
@@ -136,6 +145,8 @@ export type DaytonaInput = {
   /** Native idle auto-stop interval in minutes; 0 disables it. */
   autoStopMinutes?: number;
   networkPolicy?: "blocked" | "internet" | "daytona-default";
+  /** Minimum size; Daytona fixes a size when a snapshot is built. */
+  resources?: { vcpus?: number; memoryMiB?: number };
   fetch?: typeof fetch;
   trustedEndpoints?: DaytonaEndpointPair[];
 };
@@ -532,6 +543,59 @@ export class DaytonaDriver implements ProviderDriver {
 
     return sandbox;
   }
+  /** Native snapshot build size: whole cores and whole GiB, rounded up from the minimums. */
+  private buildSize() {
+    const { minVcpus, minMemoryMiB } = this.config.configuration;
+    const size: SnapshotBuildSize = {};
+
+    if (minVcpus !== undefined) size.cpu = Math.ceil(minVcpus);
+
+    if (minMemoryMiB !== undefined) size.memory = Math.ceil(minMemoryMiB / 1024);
+
+    return size;
+  }
+  /** Why a snapshot's fixed size is below the configured minimums, or null when it meets them. */
+  private sizeShortfall(snapshot: z.infer<typeof Snapshot>): string | null {
+    const { minVcpus, minMemoryMiB } = this.config.configuration;
+
+    if (minVcpus === undefined && minMemoryMiB === undefined) return null;
+
+    if (snapshot.cpu === undefined || snapshot.mem === undefined)
+      return `Daytona did not report the size of snapshot ${snapshot.id}`;
+
+    if (
+      (minVcpus !== undefined && snapshot.cpu < minVcpus) ||
+      (minMemoryMiB !== undefined && snapshot.mem * 1024 < minMemoryMiB)
+    )
+      return `Daytona snapshot ${snapshot.id} has ${snapshot.cpu} vCPU / ${snapshot.mem * 1024} MiB, below the configured resources; build it with these resources`;
+
+    return null;
+  }
+  /** A prepared snapshot keeps the size it was built with, so check it before any effect. */
+  private async preparedSizeRefusal(image: string): Promise<DaytonaCreateResult | null> {
+    const { minVcpus, minMemoryMiB } = this.config.configuration;
+
+    if (minVcpus === undefined && minMemoryMiB === undefined) return null;
+    let reason: string | null;
+
+    try {
+      const response = await this.request("GET", `/snapshots/${encodeURIComponent(image)}`);
+
+      reason = response.ok
+        ? this.sizeShortfall(await boundedJson(response, Snapshot))
+        : `Daytona snapshot ${image} could not be read to confirm its size`;
+    } catch {
+      reason = `Daytona snapshot ${image} could not be read to confirm its size`;
+    }
+
+    return reason
+      ? {
+          status: "rejected",
+          effect: "none",
+          error: { code: "unsupported", message: reason, effect: "none", retry: "never" },
+        }
+      : null;
+  }
   private async matchesSnapshot(
     reported: string | undefined,
     expectedId: string,
@@ -806,6 +870,7 @@ export class DaytonaDriver implements ProviderDriver {
         imageName: input.image,
         regionId: this.scope.region,
         sandboxClass: "container",
+        ...this.buildSize(),
       });
 
       if (
@@ -901,6 +966,13 @@ export class DaytonaDriver implements ProviderDriver {
         },
       };
 
+    // Restores keep the captured sandbox's size, as on every adapter.
+    if (input.imageKind !== "oci" && !input.requireSnapshotIdentity) {
+      const refused = await this.preparedSizeRefusal(input.image);
+
+      if (refused) return refused;
+    }
+
     // A stable name lets an unknown OCI build be found without repeating the build.
     const name = `sandbar-${input.identity.submissionId}`;
     let snapshotId = input.image;
@@ -936,6 +1008,7 @@ export class DaytonaDriver implements ProviderDriver {
             imageName: input.image,
             regionId: this.scope.region,
             sandboxClass: "container",
+            ...this.buildSize(),
           }),
           "application/json",
         );
@@ -985,6 +1058,10 @@ export class DaytonaDriver implements ProviderDriver {
           !["container", "linux-vm"].includes(current.sandboxClass ?? "")
         )
           return uncertain("Daytona snapshot unavailable in target region");
+
+        const shortfall = this.sizeShortfall(current);
+
+        if (shortfall) return uncertain(shortfall);
       } catch {
         if (!buildSubmitted)
           return {
@@ -2648,16 +2725,24 @@ export function daytonaRegistration(
 }
 
 export async function daytonaProvider(input: DaytonaInput) {
+  const requested = {
+    apiUrl: input.apiUrl ?? "https://app.daytona.io/api",
+    toolboxOrigin: input.toolboxOrigin ?? "https://proxy.app.daytona.io",
+    target: input.target,
+    networkPolicy: input.networkPolicy ?? "daytona-default",
+    ttlMinutes: String(input.ttlMinutes ?? 15),
+    autoStopMinutes: String(input.autoStopMinutes ?? 0),
+  };
+
+  if (input.resources?.vcpus !== undefined)
+    Object.assign(requested, { minVcpus: String(input.resources.vcpus) });
+
+  if (input.resources?.memoryMiB !== undefined)
+    Object.assign(requested, { minMemoryMiB: String(input.resources.memoryMiB) });
+
   const config = validate({
     credentials: { apiKey: input.apiKey },
-    configuration: {
-      apiUrl: input.apiUrl ?? "https://app.daytona.io/api",
-      toolboxOrigin: input.toolboxOrigin ?? "https://proxy.app.daytona.io",
-      target: input.target,
-      networkPolicy: input.networkPolicy ?? "daytona-default",
-      ttlMinutes: String(input.ttlMinutes ?? 15),
-      autoStopMinutes: String(input.autoStopMinutes ?? 0),
-    },
+    configuration: requested,
   });
 
   const digest = await crypto.subtle.digest(
@@ -2669,13 +2754,22 @@ export async function daytonaProvider(input: DaytonaInput) {
 
   const connectionId = `daytona_${Buffer.from(digest).toString("hex")}`;
 
+  const { minVcpus, minMemoryMiB, ...validated } = config.configuration;
+
+  const configuration = {
+    ...validated,
+    ttlMinutes: String(validated.ttlMinutes),
+    autoStopMinutes: String(validated.autoStopMinutes),
+  };
+
+  if (minVcpus !== undefined) Object.assign(configuration, { minVcpus: String(minVcpus) });
+
+  if (minMemoryMiB !== undefined)
+    Object.assign(configuration, { minMemoryMiB: String(minMemoryMiB) });
+
   return daytonaRegistration(input.fetch, input.trustedEndpoints).connect({
     credentials: config.credentials,
-    configuration: {
-      ...config.configuration,
-      ttlMinutes: String(config.configuration.ttlMinutes),
-      autoStopMinutes: String(config.configuration.autoStopMinutes),
-    },
+    configuration,
     connectionId,
   });
 }

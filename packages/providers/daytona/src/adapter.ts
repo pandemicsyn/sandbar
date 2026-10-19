@@ -14,6 +14,7 @@ import {
   assertResourceScope,
   unknownSandboxFacts,
   nativeDeadline,
+  ResourceMinimums,
   type SandboxInfo,
   type SandboxReference,
 } from "@sandbar-sdk/adapter";
@@ -63,6 +64,11 @@ const Configuration = z
       .strictObject({ restartAfterCapture: z.boolean().default(true) })
       .default({ restartAfterCapture: true }),
     ttlMinutes: z.coerce.number().int().min(1).safe().optional(),
+    /**
+     * Minimum size. Daytona fixes a size when it builds a snapshot, so OCI images are built with
+     * it and a prepared snapshot must already meet it.
+     */
+    resources: ResourceMinimums.optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("protected") })
       .default({ access: "protected" }),
@@ -430,6 +436,7 @@ export function createDaytonaAdapter(
         networkPolicy: config.networkPolicy,
         ttlMinutes: config.ttlMinutes,
         autoStopMinutes: config.autoStopMinutes,
+        resources: config.resources,
         fetch: fetchImpl,
         trustedEndpoints,
       });
@@ -544,6 +551,14 @@ export function createDaytonaAdapter(
                   },
                 }
               : unknownSandboxFacts().retention,
+          resources:
+            value.cpu !== undefined &&
+            value.cpu > 0 &&
+            value.memory !== undefined &&
+            Number.isSafeInteger(value.memory) &&
+            value.memory > 0
+              ? { status: "known", value: { vcpus: value.cpu, memoryMiB: value.memory * 1024 } }
+              : unknownSandboxFacts().resources,
         };
       };
 

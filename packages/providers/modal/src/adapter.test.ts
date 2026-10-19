@@ -1092,3 +1092,76 @@ test("Modal lists the verified App's sandboxes without reopenable references", a
     await client.close();
   }
 });
+
+test("Modal resources reserve the configured size and inspect reports it", async () => {
+  const records = new Map<string, { id: string; tags: Record<string, string>; running: boolean }>();
+  const creates: Parameters<ModalTransport["create"]>[0][] = [];
+
+  const transport: ModalTransport = {
+    async lookupApp() {
+      return "ap-main";
+    },
+    async imageExists() {
+      return true;
+    },
+    async create(input) {
+      creates.push(input);
+      const record = { id: `sb-${creates.length}`, tags: input.tags, running: true };
+      records.set(input.name, record);
+
+      return record.id;
+    },
+    async findByName(_app, _environment, name) {
+      return records.get(name) ?? null;
+    },
+    async *list() {
+      for (const record of records.values()) yield record;
+    },
+    async terminate() {
+      return true;
+    },
+    async poll() {
+      return "stopped";
+    },
+    async readBytes() {
+      return new Uint8Array();
+    },
+    async fileExists() {
+      return false;
+    },
+    async start() {},
+    async stdin() {},
+    async result() {
+      return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
+    },
+    close() {},
+  };
+
+  const adapter = createModalAdapter(() => transport);
+
+  for (const [resources, expected] of [
+    [
+      { vcpus: 0.5, memoryMiB: 1024 },
+      { status: "known", value: { vcpus: 0.5, memoryMiB: 1024 } },
+    ],
+    [{ vcpus: 2 }, { status: "unknown", reason: expect.any(String) }],
+  ] as const) {
+    const client = await Sandbar.connect({
+      adapter,
+      config: { appName: "existing", environment: "main", resources },
+      credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+    });
+
+    try {
+      const box = await client.sandboxes.create({ environment: Image.prepared("im-fixture") });
+      const { cpu, memoryMiB } = creates.at(-1)!;
+      expect({ cpu, memoryMiB }).toEqual({
+        cpu: resources.vcpus,
+        memoryMiB: "memoryMiB" in resources ? resources.memoryMiB : undefined,
+      });
+      expect((await box.inspect()).resources).toEqual(expected);
+    } finally {
+      await client.close();
+    }
+  }
+});

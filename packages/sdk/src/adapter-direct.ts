@@ -75,7 +75,9 @@ import {
   assertSandboxReference,
   sandboxReference,
   type SandboxReference,
-  type SandboxInfo,
+  type SandboxInfo as AdapterSandboxInfo,
+  type Fact,
+  type SandboxResources,
   stateCapabilities,
   resolveSnapshot,
   checkCreate,
@@ -153,6 +155,9 @@ import {
   type ImageBuildResult,
 } from "./resource";
 import type { BoundAdapter } from "./bound";
+
+/** A sandbox observation; `resources` is always present, as unknown when the adapter can't read it. */
+export type SandboxInfo = AdapterSandboxInfo & { resources: Fact<SandboxResources> };
 
 export { Image, outputText } from "./resource";
 
@@ -1234,7 +1239,11 @@ export class AdapterSandbox {
       });
 
       if (!parsed.success) throw new SandbarError("INVALID_RESPONSE", "Invalid sandbox inspection");
-      const info = parsed.data;
+
+      const info = {
+        ...parsed.data,
+        resources: parsed.data.resources ?? unknownSandboxFacts().resources,
+      };
 
       if (info.reference) {
         if (info.reference.nativeId !== this.id)
@@ -2570,7 +2579,7 @@ export class AdapterDirectClient {
       timeout,
     ]);
 
-    let info: SandboxInfo;
+    let info: AdapterSandboxInfo;
 
     try {
       info = await readWhileOpen(

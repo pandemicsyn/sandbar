@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import { AdapterError, defineAdapter } from "@sandbar-sdk/adapter";
+import {
+  AdapterError,
+  defineAdapter,
+  ResourceMinimums,
+  type Fact,
+  type SandboxResources,
+} from "@sandbar-sdk/adapter";
 import {
   createSdkTransport,
   MODAL_ENDPOINT,
@@ -30,6 +36,11 @@ const Configuration = z.strictObject({
       ]),
     ])
     .default(DEFAULT_IMAGE),
+  /**
+   * Minimum size, reserved exactly: `vcpus` becomes Modal's CPU reservation (fractions allowed) and
+   * `memoryMiB` its memory reservation. Unset dimensions take Modal's defaults.
+   */
+  resources: ResourceMinimums.optional(),
   /** Modal allows sandboxes to run for up to 24 hours. */
   timeoutSeconds: z.coerce.number().int().min(60).max(86_400).default(900),
 });
@@ -64,6 +75,19 @@ function writeCount(bytes: Uint8Array): number | undefined {
 }
 
 type RecordValue = z.output<typeof RecordSchema>;
+
+/** Modal does not report reservations back, so the adapter records the full one in a tag. */
+const RESOURCES_TAG = "sandbar_resources";
+
+function recordSize(record: RecordValue): Fact<SandboxResources> {
+  const match = /^(\d+(?:\.\d+)?)\/(\d+)$/.exec(record.tags[RESOURCES_TAG] ?? "");
+  const vcpus = Number(match?.[1]);
+  const memoryMiB = Number(match?.[2]);
+
+  return match && vcpus > 0 && Number.isSafeInteger(memoryMiB) && memoryMiB > 0
+    ? { status: "known", value: { vcpus, memoryMiB } }
+    : { status: "unknown", reason: "Modal reports no size unless both resources are configured" };
+}
 
 export function modalWriteScript(overwrite: boolean): string {
   const prefix = 'umask 077; mkdir -p -- "$1" && ';
@@ -218,6 +242,14 @@ export function createModalAdapter(
                 timeoutMs: config.timeoutSeconds * 1000,
               };
 
+              if (config.resources?.vcpus !== undefined) request.cpu = config.resources.vcpus;
+
+              if (config.resources?.memoryMiB !== undefined)
+                request.memoryMiB = config.resources.memoryMiB;
+
+              if (request.cpu !== undefined && request.memoryMiB !== undefined)
+                request.tags[RESOURCES_TAG] = `${request.cpu}/${request.memoryMiB}`;
+
               if (input.ociReference) request.ociReference = input.ociReference;
 
               if (input.env) request.env = input.env;
@@ -322,7 +354,11 @@ export function createModalAdapter(
           const record = await find(box.id);
 
           return record
-            ? { id: record.id, state: record.running ? ("running" as const) : ("unknown" as const) }
+            ? {
+                id: record.id,
+                state: record.running ? ("running" as const) : ("unknown" as const),
+                resources: recordSize(record),
+              }
             : null;
         },
         async inventory(input) {

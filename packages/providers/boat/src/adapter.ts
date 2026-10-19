@@ -10,8 +10,12 @@ import {
   AdapterError,
   assertResourceScope,
   defineAdapter,
+  ResourceMinimums,
   sandboxReference,
+  smallestSize,
   unknownSandboxFacts,
+  type Fact,
+  type SandboxResources,
   type AdapterSession,
   type AttemptContext,
   type CreateInput,
@@ -63,7 +67,10 @@ const Configuration = z
     network: z.literal("internet").optional(),
     /** Default prepared image: the stock machine, a named snapshot or a share code. */
     image: Image.default(BASE_IMAGE),
-    machine: z.enum(["small", "default", "large", "xlarge"]).default("default"),
+    /** Minimum size; the smallest Boat machine type that meets it is used. */
+    resources: ResourceMinimums.optional(),
+    /** @deprecated Use `resources`. A Boat machine type; omitted, Boat's `default` (4 vCPU). */
+    machine: z.enum(["small", "default", "large", "xlarge"]).optional(),
     /**
      * Boat environment to attach (account variables, secret files and logins). Omitted,
      * sandboxes start with none of the account's secrets (`noEnv`).
@@ -77,6 +84,13 @@ const Configuration = z
       .default({ lifetimeSeconds: 900 }),
   })
   .superRefine((value, ctx) => {
+    if (value.resources !== undefined && value.machine !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources"],
+        message: "Supply resources or the deprecated machine, not both",
+      });
+
     if (value.network === undefined)
       ctx.addIssue({
         code: "custom",
@@ -85,6 +99,24 @@ const Configuration = z
       });
   })
   .transform(({ network, ...value }) => ({ ...value, networkPolicy: network ?? "internet" }));
+
+/** Boat machine types, smallest first (docs.boat.dev/pricing; GB read as GiB). */
+const MACHINES = [
+  { type: "small", vcpus: 2, memoryMiB: 4096 },
+  { type: "default", vcpus: 4, memoryMiB: 8192 },
+  { type: "large", vcpus: 8, memoryMiB: 16384 },
+  { type: "xlarge", vcpus: 16, memoryMiB: 32768 },
+] as const;
+
+/** Boat reports the guaranteed vCPUs and whole GB of memory for the sandbox's type. */
+function sandboxSize(sandbox: NativeSandbox): Fact<SandboxResources> {
+  const vcpus = sandbox.vcpu ?? 0;
+  const memoryGB = sandbox.memoryGB ?? 0;
+
+  return Number.isSafeInteger(vcpus) && vcpus > 0 && Number.isSafeInteger(memoryGB) && memoryGB > 0
+    ? { status: "known", value: { vcpus, memoryMiB: memoryGB * 1024 } }
+    : { status: "unknown", reason: "Boat did not report the sandbox size" };
+}
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -197,6 +229,11 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
     config: Configuration,
     credentials: Credentials,
     async connect({ config, credentials, host }) {
+      // Unmet minimums reject before any provider IO.
+      const machine = config.resources
+        ? smallestSize("Boat", MACHINES, config.resources).type
+        : (config.machine ?? "default");
+
       const native: Native = createBoatClient(credentials.apiKey, options.fetch);
       const secrets = [credentials.apiKey];
       // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native SDK throws are normalized at this boundary.
@@ -305,6 +342,7 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
             ? { status: "none" }
             : { status: "unknown", reason: "Boat reported no auto-stop deadline" },
         idleStop: { status: "known", value: null },
+        resources: sandboxSize(sandbox),
       });
 
       const partialCreate = (
@@ -419,7 +457,7 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
 
             try {
               const request: CreateSandboxRequest = {
-                type: config.machine,
+                type: machine,
                 ttlSeconds: config.lifecycle.lifetimeSeconds,
               };
 

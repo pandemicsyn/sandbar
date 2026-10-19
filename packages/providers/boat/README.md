@@ -27,7 +27,7 @@ Scope is the account id from `GET /me` plus the fixed `https://boat.dev/api/v1` 
 | --- | --- |
 | `network` | Required literal `internet`. Boat has no provider egress controls. |
 | `image` | `ubuntu-24.04` (stock machine), a named snapshot, or a `bsh_` share code. No OCI images. |
-| `machine` | `default`; also `small`, `large`, `xlarge`. |
+| `resources` | Optional minimum `{ vcpus, memoryMiB }`; picks the smallest machine type: `small` (2 vCPU, 4 GiB), `default` (4, 8 GiB), `large` (8, 16 GiB), `xlarge` (16, 32 GiB; plan-dependent). Default `default`. `inspect().resources` reports Boat's size. Deprecated alias: `machine`. |
 | `environment` | Omitted: `noEnv`, so sandboxes get none of the account's secrets. Set a Boat environment name to attach one. |
 | `lifecycle.lifetimeSeconds` | 900; 60 s to 30 days. Expiry archives the sandbox. |
 

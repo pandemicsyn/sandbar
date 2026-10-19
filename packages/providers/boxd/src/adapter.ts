@@ -10,16 +10,20 @@ import {
   AdapterCheckpointError,
   assertResourceScope,
   defineAdapter,
+  ResourceMinimums,
   sandboxReference,
+  smallestSize,
   unknownSandboxFacts,
   type AdapterSession,
   type AttemptContext,
   type CreateInput,
   type DestroyInput,
+  type Fact,
   type ReadContext,
   type ResourceReference,
   type Sandbox,
   type SandboxInfo,
+  type SandboxResources,
   type SandboxState,
   type VolumeInfo,
 } from "@sandbar-sdk/adapter";
@@ -53,6 +57,9 @@ const Configuration = z
           .default([3000]),
       })
       .default({ access: "public", ports: [3000] }),
+    /** Minimum size; the smallest boxd size class that meets it is used. */
+    resources: ResourceMinimums.optional(),
+    /** @deprecated Use `resources: { vcpus }`. */
     size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
     lifetimeSeconds: z.number().int().min(60).safe().default(900),
     volumes: z
@@ -67,6 +74,13 @@ const Configuration = z
       .default({ sizeBytes: 10 * 1024 ** 3 }),
   })
   .superRefine((value, ctx) => {
+    if (value.resources !== undefined && value.size !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources"],
+        message: "Supply resources or the deprecated size, not both",
+      });
+
     if ((value.network === undefined) === (value.networkPolicy === undefined))
       ctx.addIssue({
         code: "custom",
@@ -78,6 +92,9 @@ const Configuration = z
     ...value,
     networkPolicy: network ?? value.networkPolicy ?? "internet",
   }));
+
+/** boxd size classes, smallest first: each vCPU comes with 4 GiB of memory. */
+const SIZES = [1, 2, 4, 8].map((vcpus) => ({ vcpus, memoryMiB: vcpus * 4096 }));
 
 const Credentials = z.strictObject({ apiKey: z.string().min(1) });
 
@@ -116,6 +133,16 @@ function state(native: Machine["status"]): SandboxState {
     default:
       return "unknown";
   }
+}
+
+/** The machine's effective size; boxd reports zeros when a response does not carry it. */
+function machineSize(machine: Machine): Fact<SandboxResources> {
+  const vcpus = Number(machine.resources?.vcpu);
+  const memoryMiB = Math.floor(Number(machine.resources?.memoryBytes) / 1024 ** 2);
+
+  return Number.isFinite(vcpus) && vcpus > 0 && Number.isFinite(memoryMiB) && memoryMiB > 0
+    ? { status: "known", value: { vcpus, memoryMiB } }
+    : { status: "unknown", reason: "boxd did not report the machine size" };
 }
 
 function nativeName(submission: string): string {
@@ -167,6 +194,11 @@ export function createBoxdAdapter(
     config: Configuration,
     credentials: Credentials,
     async connect({ config, credentials, host }) {
+      // Unmet minimums reject before any provider IO.
+      const vcpu = config.resources
+        ? smallestSize("boxd", SIZES, config.resources).vcpus
+        : config.size;
+
       const native = factory(credentials.apiKey);
       host.onClose(() => native.close());
 
@@ -283,6 +315,7 @@ export function createBoxdAdapter(
                   value: { seconds: machine.idle.hibernateAfter, action: "suspend" },
                 }
               : { status: "known", value: null },
+        resources: machineSize(machine),
       });
 
       const mountCheck = async (input: CreateInput, ctx: ReadContext) => {
@@ -429,7 +462,7 @@ export function createBoxdAdapter(
                     org: org.slug,
                     isolated: true,
                     config: {
-                      vcpu: config.size,
+                      vcpu,
                       proxies:
                         config.preview.access === "public"
                           ? config.preview.ports.map((port) => ({ name: `sandbar-${port}`, port }))

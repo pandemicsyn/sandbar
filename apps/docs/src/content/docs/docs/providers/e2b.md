@@ -35,15 +35,16 @@ Set `E2B_API_KEY` before running this on the server. `E2B_API_ID` is not require
 
 ## Connection options
 
-| Option                      | Default   | Purpose                                                                                                      |
-| --------------------------- | --------- | ------------------------------------------------------------------------------------------------------------ |
-| `apiKey`                    | Required  | Authenticated E2B API key.                                                                                   |
-| `network`                   | `blocked` | Default outbound request for create and restore: `blocked` or `internet`. Deprecated alias: `networkPolicy`. |
-| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                                                      |
-| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`.                         |
-| `timeoutSeconds`            | `900`     | Native sandbox lifetime, from 60 to 86,400 seconds.                                                          |
-| `preview.access`            | `public`  | `public` allows inbound traffic for `box.preview(port)`; `protected` keeps it closed.                        |
-| `teamId`                    | Omitted   | Optional verified team scope.                                                                                |
+| Option                      | Default   | Purpose                                                                                                         |
+| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------- |
+| `apiKey`                    | Required  | Authenticated E2B API key.                                                                                      |
+| `network`                   | `blocked` | Default outbound request for create and restore: `blocked` or `internet`. Deprecated alias: `networkPolicy`.    |
+| `templateId`                | `base`    | Public base template or a ready owned template ID/name.                                                         |
+| `lifecycle.lifetimeSeconds` | Omitted   | Initial/default renewal window in seconds; mutually exclusive with `timeoutSeconds`.                            |
+| `timeoutSeconds`            | `900`     | Native sandbox lifetime, from 60 to 86,400 seconds.                                                             |
+| `preview.access`            | `public`  | `public` allows inbound traffic for `box.preview(port)`; `protected` keeps it closed.                           |
+| `teamId`                    | Omitted   | Optional verified team scope.                                                                                   |
+| `resources`                 | Omitted   | Minimum `{ vcpus, memoryMiB }` for OCI template builds; prepared templates must meet it, so `base` is rejected. |
 
 For an owned template, configure its selector once with `templateId`. Supported names are untagged or use `:default`; arbitrary named tags and public aliases are outside this integration's current scope.
 

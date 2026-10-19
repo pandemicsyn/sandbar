@@ -50,6 +50,8 @@ type MachineRecord = {
   name: string;
   status: string;
   imageRef: string;
+  vcpu: number;
+  memoryBytes: number;
   billingOrgId: string;
   billingOrg: string;
   isolated: boolean;
@@ -279,6 +281,9 @@ export async function boxdFixture() {
               name: req.name,
               status: "running",
               imageRef: req.imageRef,
+              // Unset vCPU takes the native default size class.
+              vcpu: req.config?.vcpu || 2,
+              memoryBytes: (req.config?.vcpu || 2) * 4 * 1024 ** 3,
               billingOrgId: org,
               billingOrg: org,
               isolated: req.isolated,

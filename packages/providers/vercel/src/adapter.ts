@@ -20,7 +20,11 @@ import {
   assertResourceScope,
   assertResourceIdentity,
   sandboxReference,
+  smallestSize,
+  ResourceMinimums,
   unknownSandboxFacts,
+  type Fact,
+  type SandboxResources,
   type Sandbox,
   type SandboxReference,
   type SandboxInfo,
@@ -54,6 +58,15 @@ const networkPolicyAliases = {
 const portablePolicy = (value: z.infer<typeof policy>): "blocked" | "internet" =>
   value === "blocked" || value === "internet" ? value : networkPolicyAliases[value];
 
+/**
+ * Vercel sizes, smallest first: 1 or an even count up to 32 vCPUs, each with 2 GiB of memory.
+ * Vercel itself rejects a size above the team's plan limit.
+ */
+const SIZES = [1, ...Array.from({ length: 16 }, (_, index) => (index + 1) * 2)].map((vcpus) => ({
+  vcpus,
+  memoryMiB: vcpus * 2048,
+}));
+
 /** Vercel's longest plan limit (Pro and Enterprise, 24 hours); Vercel enforces lower plan limits itself. */
 const MAX_SESSION_SECONDS = 86_400;
 
@@ -83,7 +96,10 @@ export const vercelConfig = z.strictObject({
       "kix1",
     ])
     .default("iad1"),
-  vcpus: z.union([z.literal(2), z.literal(4), z.literal(8)]).default(2),
+  /** Minimum size; the smallest vCPU count that meets it is used (2 GiB of memory per vCPU). */
+  resources: ResourceMinimums.optional(),
+  /** @deprecated Use `resources: { vcpus }`. */
+  vcpus: z.union([z.literal(2), z.literal(4), z.literal(8)]).optional(),
   ports: z
     .array(z.number().int().min(1).max(65535))
     .max(15)
@@ -122,6 +138,13 @@ const sessionSchema = z.object({
   sourceSnapshotId: id.optional(),
   vcpus: z.number().optional(),
 });
+
+/** Vercel reports the session's vCPUs; memory is fixed at 2 GiB per vCPU. */
+function sessionSize(session: z.infer<typeof sessionSchema>): Fact<SandboxResources> {
+  return session.vcpus !== undefined && Number.isInteger(session.vcpus) && session.vcpus > 0
+    ? { status: "known", value: { vcpus: session.vcpus, memoryMiB: session.vcpus * 2048 } }
+    : { status: "unknown", reason: "Vercel did not report the session size" };
+}
 
 const nativeBox = z.object({
   name: z.string(),
@@ -245,7 +268,19 @@ export function createVercelAdapter(
           "Supply network or the deprecated networkPolicy, not both",
         );
 
+      if (config.resources !== undefined && config.vcpus !== undefined)
+        throw new AdapterError(
+          "INVALID_ARGUMENT",
+          "Supply resources or the deprecated vcpus, not both",
+        );
+
       const networkPolicy = portablePolicy(config.network ?? config.networkPolicy ?? "blocked");
+
+      // Unmet minimums reject before any provider IO; the native default is 2 vCPUs.
+      const vcpus = config.resources
+        ? smallestSize("Vercel", SIZES, config.resources).vcpus
+        : (config.vcpus ?? 2);
+
       const transport = factory();
       host.onClose(() => transport.close?.());
       const client = new VercelClient(transport, credentials.token, config.teamId);
@@ -379,7 +414,7 @@ export function createVercelAdapter(
           !value.sandbox.persistent ||
           value.sandbox.currentSessionId !== value.session.id ||
           value.session.region !== config.region ||
-          value.session.vcpus !== config.vcpus ||
+          value.session.vcpus !== vcpus ||
           value.sandbox.mounts === undefined ||
           Object.keys(value.sandbox.mounts).length !== 0 ||
           !new RegExp(`^${image.split(":")[0]}@sha256:[a-f0-9]{64}$`).test(
@@ -503,6 +538,7 @@ export function createVercelAdapter(
           ...unknownSandboxFacts(),
           expires: expiry(value, Boolean(logical)),
           execution: { status: "known", value: { nativeId: value.id } },
+          resources: sessionSize(value),
         };
       };
 
@@ -881,7 +917,7 @@ export function createVercelAdapter(
               region: config.region,
               persistent: config.persistent,
               timeout: config.timeoutSeconds * 1000,
-              resources: { vcpus: config.vcpus },
+              resources: { vcpus },
               ports: config.ports,
               failoverRegions: [],
               networkPolicy: { mode },
@@ -943,7 +979,7 @@ export function createVercelAdapter(
                   result.sandbox.tags?.sandbarSubmission === ctx.submissionId)) &&
               result.sandbox.currentSessionId === result.session.id &&
               result.session.region === config.region &&
-              result.session.vcpus === config.vcpus &&
+              result.session.vcpus === vcpus &&
               result.session.timeout === config.timeoutSeconds * 1000 &&
               new RegExp(`^${image.split(":")[0]}@sha256:[a-f0-9]{64}$`).test(
                 result.sandbox.image ?? "",
@@ -1015,7 +1051,7 @@ export function createVercelAdapter(
                 !value.sandbox.persistent ||
                 value.sandbox.currentSessionId !== value.session.id ||
                 value.session.region !== config.region ||
-                value.session.vcpus !== config.vcpus ||
+                value.session.vcpus !== vcpus ||
                 value.session.timeout !== config.timeoutSeconds * 1000 ||
                 value.session.networkPolicy?.mode !== mode ||
                 value.sandbox.networkPolicy?.mode !== mode ||
