@@ -60,7 +60,12 @@ export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_LIFETIME_SECONDS = 172_800;
 
 /** Devbox and snapshot metadata keys that record the Sandbar attempt that created them. */
-const MARK = { operation: "sandbar_operation", submission: "sandbar_submission" } as const;
+const MARK = {
+  operation: "sandbar_operation",
+  submission: "sandbar_submission",
+  /** Requested egress (`blocked` or `internet`), so recovery can check the policy without the token. */
+  network: "sandbar_network",
+} as const;
 
 /** Name of the account network policy the adapter uses for `network: "blocked"`. */
 export const BLOCKED_POLICY_NAME = "sandbar-blocked";
@@ -243,7 +248,8 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-const CreateToken = z.strictObject({ id: Id });
+/** The devbox id and the network policy id the create requested (null for internet). */
+const CreateToken = z.strictObject({ id: Id, policy: Id.nullable() });
 
 const DestroyToken = z.strictObject({ id: Id });
 
@@ -677,7 +683,23 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
         /* A failed readiness read is not evidence; continue through observation. */
       }
 
-      return pending({ id });
+      return pending({ id, policy });
+    };
+
+    /**
+     * The policy a create requested, read back from its egress marker when the token was lost:
+     * null for internet, the attached policy id when it is deny-all, or undefined when neither holds.
+     */
+    const requestedPolicy = async (devbox: Devbox, ctx: ReadContext) => {
+      const marker = devbox.metadata?.[MARK.network];
+      const attached = devbox.launch_parameters?.network_policy_id ?? null;
+
+      if (marker === "internet") return null;
+
+      if (marker !== "blocked" || attached === null) return undefined;
+      const policy = await read(ctx, (signal) => native.getNetworkPolicy(attached, signal));
+
+      return isDenyAll(policy) ? attached : undefined;
     };
 
     /** Read-only search for a devbox whose metadata names this create attempt. */
@@ -716,7 +738,11 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
 
         const body: CreateDevboxBody = {
           ...(snapshotId === undefined ? input.plan.image : { snapshot_id: snapshotId }),
-          metadata: { [MARK.operation]: ctx.operationId, [MARK.submission]: ctx.submissionId },
+          metadata: {
+            [MARK.operation]: ctx.operationId,
+            [MARK.submission]: ctx.submissionId,
+            [MARK.network]: input.networkPolicy,
+          },
           launch_parameters: launchParameters(config, size, policy),
           tunnel: { auth_mode: config.preview.access === "public" ? "open" : "authenticated" },
         };
@@ -735,7 +761,7 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
         }
 
         try {
-          await ctx.checkpoint({ id });
+          await ctx.checkpoint({ id, policy });
         } catch (error) {
           if (error instanceof AdapterCheckpointError) error.outcome = partialCreate(id, ctx);
           throw error;
@@ -765,14 +791,32 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
           );
 
         const devbox = await find(id, ctx);
-        const policy = devbox?.launch_parameters?.network_policy_id ?? null;
         const creation = { operation: attempt.operationId, submission: attempt.submissionId };
 
         if (devbox && devbox.metadata?.[MARK.submission] !== attempt.submissionId)
           return ctx.unknown("Runloop devbox does not carry this create attempt; do not replay");
+
+        const policy = token.success
+          ? token.data.policy
+          : devbox
+            ? await requestedPolicy(devbox, ctx)
+            : null;
+
+        if (policy === undefined)
+          return ctx.unknown(
+            "Runloop devbox does not show the requested network policy; destroy it or inspect without replay",
+            partialCreate(id, attempt),
+          );
+
         const current = await created(id, creation, policy, ctx);
 
         if (current.value) return current.value;
+
+        if (current.mismatch)
+          return ctx.unknown(
+            "Runloop started the devbox without the requested network policy; destroy it",
+            partialCreate(id, attempt),
+          );
 
         if (!current.devbox || stopped.has(current.devbox.status))
           return ctx.unknown(
@@ -780,7 +824,7 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
             partialCreate(id, attempt),
           );
 
-        return ctx.pending({ id }, { pollAfterMs: pollMs });
+        return ctx.pending({ id, policy }, { pollAfterMs: pollMs });
       },
     });
 
@@ -954,12 +998,18 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
         const remaining = until - Date.now();
 
         if (remaining <= 0) {
-          await native
+          const killed = await native
             .killExecution(id, execution.execution_id, signalFor(readContext(ctx.signal, 10)))
-            .catch(() => undefined);
+            .then(
+              (ended) =>
+                ended.execution_id === execution.execution_id && ended.status === "completed",
+            )
+            .catch(() => false);
 
           return ctx.unknown(
-            `Runloop command passed its ${input.deadlineSeconds}s deadline and was stopped; output is unavailable`,
+            killed
+              ? `Runloop command passed its ${input.deadlineSeconds}s deadline and was killed; output is unavailable`
+              : `Runloop command passed its ${input.deadlineSeconds}s deadline and Runloop did not confirm killing it; it may still be running`,
           );
         }
 
@@ -988,47 +1038,44 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
 
       if ("stdout" in record) return record;
 
-      try {
-        const signal = signalFor(readContext(ctx.signal, 120));
+      const signal = signalFor(readContext(ctx.signal, 120));
 
-        const stdout = await native.downloadFile(
+      // The exit code is already confirmed; a stream that cannot be downloaded is reported as
+      // truncated, never by discarding the result.
+      const download = (stream: "stdout" | "stderr") =>
+        native
+          .downloadFile(id, `${record.directory}/${stream}`, input.maxOutputBytes, signal)
+          .catch(() => null);
+
+      const stdout = await download("stdout");
+      const stderr = await download("stderr");
+
+      if (!stdout || !stderr)
+        // The directory is left in /tmp so its output can still be read from the guest.
+        return {
+          exitCode: record.exitCode,
+          stdout: stdout ?? new Uint8Array(),
+          stderr: stderr ?? new Uint8Array(),
+          truncated: true,
+        };
+
+      // Best effort: the directory holds only this command's bounded output under /tmp.
+      await native
+        .execute(
           id,
-          `${record.directory}/O`,
-          input.maxOutputBytes,
-          signal,
-        );
+          {
+            command: `rm -rf -- ${quote(record.directory)}`,
+            command_id: uuidv7(),
+            optimistic_timeout: 5,
+          },
+          signalFor(readContext(ctx.signal, 15)),
+        )
+        .catch(() => undefined);
 
-        const stderr = await native.downloadFile(
-          id,
-          `${record.directory}/E`,
-          input.maxOutputBytes,
-          signal,
-        );
-
-        const result = filesResult(record, stdout, stderr, input.maxOutputBytes);
-
-        if (!result)
-          return ctx.unknown("Runloop command output does not match its recorded length");
-
-        return result;
-      } catch {
-        return ctx.unknown(
-          `Runloop command exited with ${record.exitCode} but its output could not be downloaded`,
-        );
-      } finally {
-        // Best effort: the directory holds only this command's bounded output under /tmp.
-        await native
-          .execute(
-            id,
-            {
-              command: `rm -rf -- ${quote(record.directory)}`,
-              command_id: uuidv7(),
-              optimistic_timeout: 5,
-            },
-            signalFor(readContext(ctx.signal, 15)),
-          )
-          .catch(() => undefined);
-      }
+      return (
+        filesResult(record, stdout, stderr, input.maxOutputBytes) ??
+        ctx.unknown("Runloop command output does not match its recorded length")
+      );
     };
 
     const result: AdapterSession<

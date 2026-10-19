@@ -139,6 +139,8 @@ export function runloopFixture() {
   let sequence = 0;
   let loseNextCreate = false;
   let holdNextCreate = false;
+  /** Start the next devbox without the network policy its create requested. */
+  let dropNextPolicy = false;
   let releaseHeld: (() => void) | undefined;
   let held: Promise<void> | undefined;
   let nextFault: { pattern: RegExp; response: Response | "lost" } | undefined;
@@ -260,6 +262,11 @@ export function runloopFixture() {
         body: CreateBody.parse(raw),
         files: new Map(),
       };
+
+      if (dropNextPolicy) {
+        dropNextPolicy = false;
+        delete box.body.launch_parameters?.network_policy_id;
+      }
 
       devboxes.set(box.id, box);
 
@@ -573,6 +580,9 @@ export function runloopFixture() {
       policies.set(policy.id, policy);
 
       return policy;
+    },
+    dropPolicyOnNextCreate() {
+      dropNextPolicy = true;
     },
     loseNextCreateResponse() {
       loseNextCreate = true;

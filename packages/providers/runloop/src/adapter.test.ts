@@ -264,6 +264,46 @@ test("create refusals reject; 5xx and lost responses stay unknown and are found 
   }
 });
 
+test("recovery checks the requested network policy, with or without the create token", async () => {
+  const { fixture, connect } = setup();
+  const client = await connect({});
+
+  try {
+    // Token saved: the devbox came up without its deny-all policy, so recovery never accepts it.
+    fixture.dropPolicyOnNextCreate();
+    const dropped = await client.sandboxes.submitCreate();
+    await expect(dropped.observe()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: { kind: "create", status: "partial" },
+    });
+    await expect((await client.recover(dropped.reference)).observe()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: { kind: "create", status: "partial" },
+    });
+
+    // Response lost: the egress marker on the devbox stands in for the token.
+    fixture.dropPolicyOnNextCreate();
+    fixture.loseNextCreateResponse();
+    const lost = await client.sandboxes.submitCreate();
+    await expect(lost.observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await expect((await client.recover(lost.reference)).observe()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: { kind: "create", status: "partial" },
+    });
+
+    fixture.loseNextCreateResponse();
+    const intact = await client.sandboxes.submitCreate();
+    await expect(intact.observe()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    const recovered = await (await client.recover(intact.reference)).observe();
+    expect(recovered).toMatchObject({
+      reference: { nativeId: [...fixture.devboxes.keys()].at(-1) },
+    });
+    expect(fixture.effects.create).toBe(3);
+  } finally {
+    await client.close();
+  }
+});
+
 test("slow provisioning keeps one create effect and completes through observation", async () => {
   const { fixture, connect } = setup();
   fixture.setSettlePolls(Number.MAX_SAFE_INTEGER);
@@ -357,6 +397,29 @@ test("large output is downloaded as bytes and its guest directory removed", asyn
   }
 });
 
+test("a failed download keeps the confirmed exit code and reports truncation", async () => {
+  const { fixture, connect } = setup();
+  const client = await connect();
+
+  try {
+    const box = await client.sandboxes.create();
+    fixture.failNext(/\/download_file$/, fixture.error(503, "unavailable"));
+
+    const result = await box.exec({
+      command: { kind: "shell", script: "head -c 40000 /dev/zero; printf warn >&2" },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toEqual(new Uint8Array());
+    expect(new TextDecoder().decode(result.stderr)).toBe("warn");
+    expect(result.truncated).toBe(true);
+    // The output directory stays in the guest instead of being deleted.
+    expect(fixture.commands.filter((command) => command.startsWith("rm -rf"))).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+});
+
 test("long commands are awaited across windows; a passed deadline kills and is unknown", async () => {
   const { fixture, connect } = setup();
   const client = await connect();
@@ -372,8 +435,19 @@ test("long commands are awaited across windows; a passed deadline kills and is u
     fixture.setCommandWaits(Number.MAX_SAFE_INTEGER);
     await expect(
       box.exec({ command: { kind: "argv", argv: ["true"] }, deadlineSeconds: 1 }),
-    ).rejects.toBeInstanceOf(OutcomeUnknownError);
+    ).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      message: expect.stringContaining("was killed"),
+    });
     expect(fixture.count("POST", /\/kill$/)).toBe(1);
+
+    fixture.failNext(/\/kill$/, fixture.error(503, "unavailable"));
+    await expect(
+      box.exec({ command: { kind: "argv", argv: ["true"] }, deadlineSeconds: 1 }),
+    ).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      message: expect.stringContaining("may still be running"),
+    });
   } finally {
     await client.close();
   }

@@ -57,15 +57,15 @@ export function wrapperScript(input: WrapperInput): string {
 
   return [
     "sandbar_d=$(mktemp -d /tmp/sandbar-exec.XXXXXXXX) || exit 97",
-    `(${body}) <${stdin} >"$sandbar_d/o" 2>"$sandbar_d/e"`,
+    `(${body}) <${stdin} >"$sandbar_d/stdout.raw" 2>"$sandbar_d/stderr.raw"`,
     "sandbar_c=$?",
-    `sandbar_ol=$(($(wc -c <"$sandbar_d/o"))); sandbar_el=$(($(wc -c <"$sandbar_d/e")))`,
-    `head -c ${bound} "$sandbar_d/o" >"$sandbar_d/O"; head -c ${bound} "$sandbar_d/e" >"$sandbar_d/E"`,
-    `rm -f "$sandbar_d/o" "$sandbar_d/e"${removeStdin}`,
-    `if [ $(($(wc -c <"$sandbar_d/O") + $(wc -c <"$sandbar_d/E"))) -le ${INLINE_BYTES} ]; then`,
+    `sandbar_ol=$(($(wc -c <"$sandbar_d/stdout.raw"))); sandbar_el=$(($(wc -c <"$sandbar_d/stderr.raw")))`,
+    `head -c ${bound} "$sandbar_d/stdout.raw" >"$sandbar_d/stdout"; head -c ${bound} "$sandbar_d/stderr.raw" >"$sandbar_d/stderr"`,
+    `rm -f "$sandbar_d/stdout.raw" "$sandbar_d/stderr.raw"${removeStdin}`,
+    `if [ $(($(wc -c <"$sandbar_d/stdout") + $(wc -c <"$sandbar_d/stderr"))) -le ${INLINE_BYTES} ]; then`,
     `printf '${EXEC_RECORD} inline %s %s %s\\n' "$sandbar_c" "$sandbar_ol" "$sandbar_el"`,
-    `base64 <"$sandbar_d/O" | tr -d '\\n'; printf '\\n'`,
-    `base64 <"$sandbar_d/E" | tr -d '\\n'; printf '\\n'`,
+    `base64 <"$sandbar_d/stdout" | tr -d '\\n'; printf '\\n'`,
+    `base64 <"$sandbar_d/stderr" | tr -d '\\n'; printf '\\n'`,
     `rm -rf "$sandbar_d"`,
     "else",
     `printf '${EXEC_RECORD} files %s %s %s %s\\n' "$sandbar_c" "$sandbar_ol" "$sandbar_el" "$sandbar_d"`,
@@ -80,7 +80,7 @@ export type WrapperResult = {
   truncated: boolean;
 };
 
-/** Output left in the guest: download `${directory}/O` and `${directory}/E`, then remove it. */
+/** Output left in the guest: download `${directory}/stdout` and `${directory}/stderr`, then remove it. */
 export type WrapperFiles = {
   exitCode: number;
   stdoutLength: number;
