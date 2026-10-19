@@ -15,14 +15,14 @@ Sandbar is one TypeScript API over several sandbox providers. The application ta
 
 ## Connect
 
-| Provider | Package                | Connect with                                                                                                                |
-| -------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| E2B      | `@sandbar-sdk/e2b`     | `Sandbar.connect(e2b({ apiKey }))`                                                                                          |
-| Daytona  | `@sandbar-sdk/daytona` | `Sandbar.connect(daytona({ apiKey, target: "us", environment: Image.prepared("<snapshot>"), network: "daytona-default" }))` |
-| boxd     | `@sandbar-sdk/boxd`    | `Sandbar.connect({ adapter: boxdAdapter, credentials: { apiKey }, config: { org, network: "internet" } })`                  |
-| Boat     | `@sandbar-sdk/boat`    | `Sandbar.connect({ adapter: boatAdapter, credentials: { apiKey }, config: { network: "internet" } })`                       |
-| Runloop  | `@sandbar-sdk/runloop` | `Sandbar.connect({ adapter: runloopAdapter, credentials: { apiKey }, config: { network: "blocked" } })`                     |
-| Vercel   | `@sandbar-sdk/vercel`  | `Sandbar.connect({ adapter: vercel, credentials: { token }, config: { teamId, projectId } })`                               |
+| Provider               | Package                | Connect with                                                                                                                |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| E2B                    | `@sandbar-sdk/e2b`     | `Sandbar.connect(e2b({ apiKey }))`                                                                                          |
+| Daytona                | `@sandbar-sdk/daytona` | `Sandbar.connect(daytona({ apiKey, target: "us", environment: Image.prepared("<snapshot>"), network: "daytona-default" }))` |
+| boxd                   | `@sandbar-sdk/boxd`    | `Sandbar.connect({ adapter: boxdAdapter, credentials: { apiKey }, config: { org, network: "internet" } })`                  |
+| Boat                   | `@sandbar-sdk/boat`    | `Sandbar.connect({ adapter: boatAdapter, credentials: { apiKey }, config: { network: "internet" } })`                       |
+| Runloop (experimental) | `@sandbar-sdk/runloop` | `Sandbar.connect({ adapter: runloopAdapter, credentials: { apiKey }, config: { network: "blocked" } })`                     |
+| Vercel                 | `@sandbar-sdk/vercel`  | `Sandbar.connect({ adapter: vercel, credentials: { token }, config: { teamId, projectId } })`                               |
 
 `connect` verifies credentials with read-only calls and allocates nothing. Put provider choices (region, network policy, defaults) in this setup, not in every call.
 
@@ -106,7 +106,7 @@ Never build a reference by hand from a sandbox id. `get()` never creates or resu
 - **E2B:** the `base` template works out of the box; use `/home/user`.
 - **boxd:** needs `network: "internet"` and an org; files are capped at 1 MiB and need `overwrite: true`.
 - **Boat:** needs `network: "internet"`; files live under `/home/user` or `/tmp`, are capped at 5 MiB and need `overwrite: true`. Sandboxes get none of the Boat account's secrets unless `environment` names one. `suspend()` archives the disk; `resume()` starts a fresh machine.
-- **Runloop:** egress is blocked by default (the adapter manages a deny-all `sandbar-blocked` network policy); pass `network: "internet"` to allow it. Files need `overwrite: true`. `suspend()` keeps the disk only; `snapshot()` captures the disk, and restores start fresh processes. `preview(port)` returns a URL plus an auth header unless `preview.access` is `"public"`.
+- **Runloop (experimental; sign-ups are invite-only):** egress is blocked by default (the adapter manages a deny-all `sandbar-blocked` network policy); pass `network: "internet"` to allow it. Files need `overwrite: true`. `suspend()` keeps the disk only; `snapshot()` captures the disk, and restores start fresh processes. `preview(port)` returns a URL plus an auth header unless `preview.access` is `"public"`.
 - **Vercel:** disposable Node 24 sandboxes with blocked networking by default; no stdin, process streams, snapshots or volumes; files need `overwrite: true`.
 
 Check `await client.sandboxes.checkCreate(input)` before an unusual create; it is read-only and reports `supported`, `unsupported`, `unavailable` or `unknown`.

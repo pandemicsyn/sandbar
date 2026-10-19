@@ -1,6 +1,6 @@
 # @sandbar-sdk/runloop
 
-Experimental external Runloop adapter for Sandbar. Implementation and offline fixtures are available; no live Runloop run has been made yet. Install with `npm install sandbar-sdk @sandbar-sdk/runloop`. Requires Node 20+ or Bun and a Runloop API key. Calls the Runloop REST API v1 directly, with no native SDK dependency.
+Experimental external Runloop adapter for Sandbar. Runloop sign-ups are currently by invitation only. Implementation and offline fixtures are available; no live Runloop run has been made yet. Install with `npm install sandbar-sdk @sandbar-sdk/runloop`. Requires Node 20+ or Bun and a Runloop API key. Calls the Runloop REST API v1 directly, with no native SDK dependency.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";

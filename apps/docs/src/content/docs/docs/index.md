@@ -37,14 +37,14 @@ The [`sandbar` CLI](/docs/cli/) creates, uses and cleans up sandboxes from your 
 
 The [Tested provider support](/docs/providers/support/) matrix shows which operations have been exercised against real providers, along with the tested configuration and limits. Choose setup and limits for your adapter:
 
-| Adapter                                   | What you get                                                                                |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [Daytona](/docs/providers/daytona/)       | Commands, files, processes, snapshots, volumes and suspend/resume.                          |
-| [E2B](/docs/providers/e2b/)               | Commands, files, processes, snapshots and suspend/resume.                                   |
-| [boxd](/docs/providers/boxd/)             | Experimental. MicroVM sandboxes with commands, files and reconnecting to running sandboxes. |
-| [Boat](/docs/providers/boat/)             | Experimental. Full Ubuntu VMs with commands, files, archive/resume and renewal.             |
-| [Runloop](/docs/providers/runloop/)       | Experimental. Devboxes with blocked egress, disk snapshots, suspend/resume and previews.    |
-| [Vercel Sandbox](/docs/providers/vercel/) | Short-lived Node 24 sandboxes with commands and files.                                      |
-| [Modal](/docs/direct-quickstart/)         | Experimental. Not yet published to npm.                                                     |
+| Adapter                                   | What you get                                                                                          |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [Daytona](/docs/providers/daytona/)       | Commands, files, processes, snapshots, volumes and suspend/resume.                                    |
+| [E2B](/docs/providers/e2b/)               | Commands, files, processes, snapshots and suspend/resume.                                             |
+| [boxd](/docs/providers/boxd/)             | Experimental. MicroVM sandboxes with commands, files and reconnecting to running sandboxes.           |
+| [Boat](/docs/providers/boat/)             | Experimental. Full Ubuntu VMs with commands, files, archive/resume and renewal.                       |
+| [Runloop](/docs/providers/runloop/)       | Experimental; Runloop sign-ups are invite-only. Devboxes with blocked egress, snapshots and previews. |
+| [Vercel Sandbox](/docs/providers/vercel/) | Short-lived Node 24 sandboxes with commands and files.                                                |
+| [Modal](/docs/direct-quickstart/)         | Experimental. Not yet published to npm.                                                               |
 
 For API details, use the [TypeScript reference](/docs/reference/typescript/). To add a provider, start with [Write an adapter](/docs/guides/write-an-adapter/).

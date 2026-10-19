@@ -15,7 +15,7 @@ Set `SANDBAR_PROVIDER` (or pass `--provider`) and the provider's own variables:
 | `e2b`     | `E2B_API_KEY`                                                                 |
 | `boxd`    | `BOXD_API_KEY`, `BOXD_ORG`, `BOXD_NETWORK=internet`                           |
 | `boat`    | `BOAT_API_KEY`, `BOAT_NETWORK=internet`                                       |
-| `runloop` | `RUNLOOP_API_KEY`; optional `RUNLOOP_NETWORK=internet`                        |
+| `runloop` | `RUNLOOP_API_KEY`; optional `RUNLOOP_NETWORK=internet` (experimental)         |
 | `vercel`  | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`                         |
 | `modal`   | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `MODAL_APP_NAME`, `MODAL_ENVIRONMENT` |
 
