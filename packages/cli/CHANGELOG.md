@@ -1,5 +1,21 @@
 # @sandbar-sdk/cli
 
+## 0.6.0
+
+### Minor Changes
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`22e06ed`](https://github.com/pandemicsyn/sandbar/commit/22e06ed1fc0275fd68fd959ea4ece091f4bed180) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandbar create --env K=V` and `--env-file <path>` set environment variables for every command in the sandbox. `exec`, `sh` and `run` accept `--env-file` for one command, and `--env NAME` without a value copies `NAME` from the calling environment. Values are never written to the store, `--json` output or messages.
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`7fc61f8`](https://github.com/pandemicsyn/sandbar/commit/7fc61f8a36bd7ec7973546d630d4b567bb0cfdbc) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandbar image rm <name>` deletes a built image on the provider and drops its record; an unknown outcome exits 6 and keeps the record so a later `image rm` checks how the delete ended without resending it. `sandbar image ls --remote` lists the provider's images for the profile.
+
+- [#118](https://github.com/pandemicsyn/sandbar/pull/118) [`f9480d3`](https://github.com/pandemicsyn/sandbar/commit/f9480d30705191a63153bf89aecc2667b8327240) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `sandbar ls --remote`, which lists the selected profile's sandboxes from the provider and matches them to store names, and `sandbar adopt <id> [--name <name>]`, which records a listed sandbox so other commands can reach it. Adopted sandboxes are not treated as created by the CLI: `rm --all` skips them and `rm <name>` needs `--force`.
+
+### Patch Changes
+
+- Updated dependencies [[`22e06ed`](https://github.com/pandemicsyn/sandbar/commit/22e06ed1fc0275fd68fd959ea4ece091f4bed180), [`7fc61f8`](https://github.com/pandemicsyn/sandbar/commit/7fc61f8a36bd7ec7973546d630d4b567bb0cfdbc), [`3a8c047`](https://github.com/pandemicsyn/sandbar/commit/3a8c04763ad7804f689c00f355683e235bc00206)]:
+  - sandbar-sdk@0.6.0
+  - @sandbar-sdk/adapter@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
