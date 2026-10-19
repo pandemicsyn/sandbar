@@ -1,9 +1,9 @@
 ---
-title: Boat (external, experimental)
-description: Use the external Boat adapter for full Ubuntu VMs with commands, files, archive/resume and renewal.
+title: Boat
+description: Use the Boat adapter for full Ubuntu VMs with commands, files, archive/resume and renewal.
 ---
 
-The external `@sandbar-sdk/boat` package implements the public Sandbar adapter interface for [Boat](https://boat.dev). Install it with `npm install sandbar-sdk @sandbar-sdk/boat`; it is experimental. Use Node 20+ or Bun. Native SDK version: `@boatdev/sdk@1.9.9`, Boat Public API v1.
+The `@sandbar-sdk/boat` package implements the public Sandbar adapter interface for [Boat](https://boat.dev). Install it with `npm install sandbar-sdk @sandbar-sdk/boat`; it is experimental. Use Node 20+ or Bun. Native SDK version: `@boatdev/sdk@1.9.9`, Boat Public API v1.
 
 ```ts
 import { Sandbar } from "sandbar-sdk";

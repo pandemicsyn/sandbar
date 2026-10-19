@@ -1,7 +1,12 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { officialSupport, renderSupportMatrix } from "./support";
+import {
+  officialSupport,
+  renderSupportDetails,
+  renderSupportMatrix,
+  renderSupportOverview,
+} from "./support";
 import { loadProviderProfile } from "./profile";
 import { parseReport, renderLiveMatrix } from "./report";
 
@@ -51,6 +56,27 @@ const reports = await Promise.all(
   }),
 );
 
+// Experimental official adapters keep their results beside their own packages.
+const packageReports = external
+  ? []
+  : await Promise.all(
+      ["boxd", "vercel"].map(async (name) =>
+        parseReport(
+          JSON.parse(
+            await readFile(
+              fileURLToPath(
+                new URL(
+                  `../../providers/${name}/qualification/results/${name}.json`,
+                  import.meta.url,
+                ),
+              ),
+              "utf8",
+            ),
+          ),
+        ),
+      ),
+    );
+
 const outputDirectory = option("--output");
 
 if (external && !outputDirectory) throw new Error("External metadata requires --output directory");
@@ -62,11 +88,13 @@ const targets = [
       reports,
       Object.fromEntries(metadata.map((profile) => [profile.id, profile.name])),
       external ? "./support.md" : undefined,
-    ),
+    ) + (external ? "" : `\n${renderSupportDetails(reports, metadata)}`),
   ],
   [
     outputDirectory ? join(outputDirectory, "support.md") : join(output, "..", "support.md"),
-    renderSupportMatrix(reports, metadata),
+    external
+      ? renderSupportMatrix(reports, metadata)
+      : renderSupportOverview([...reports, ...packageReports], metadata),
   ],
 ] as const;
 

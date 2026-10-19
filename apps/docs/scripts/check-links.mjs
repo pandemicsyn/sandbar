@@ -61,13 +61,17 @@ for (const path of markdown) {
       if (target) {
         const targetText = await readFile(target, "utf8");
 
-        const anchors = [...targetText.matchAll(/^#{1,6}\s+(.+)$/gm)].map(([, heading]) =>
-          heading
-            .toLowerCase()
-            .replace(/[^\w\s-]/g, "")
-            .trim()
-            .replace(/\s+/g, "-"),
-        );
+        const anchors = [
+          ...[...targetText.matchAll(/^#{1,6}\s+(.+)$/gm)].map(([, heading]) =>
+            heading
+              .toLowerCase()
+              .replace(/[^\w\s-]/g, "")
+              .trim()
+              .replace(/\s+/g, "-"),
+          ),
+          // Explicit HTML anchors, such as the generated per-feature evidence ids.
+          ...[...targetText.matchAll(/<a id="([^"]+)"><\/a>/g)].map(([, id]) => id),
+        ];
 
         if (!anchors.includes(anchor)) errors.push(`${path}: missing anchor ${href}`);
       }
