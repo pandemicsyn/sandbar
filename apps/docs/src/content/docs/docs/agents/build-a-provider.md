@@ -3,7 +3,15 @@ title: Build a provider integration
 description: A copyable prompt to get your coding agent implementing a Sandbar provider adapter.
 ---
 
-An adapter connects a provider's native API to Sandbar. Install `@sandbar-sdk/adapter` from npm to build and test it. Replace the bracketed fields and copy this prompt into an agent with access to the integration repository.
+An adapter connects a provider's native API to Sandbar. Install `@sandbar-sdk/adapter` from npm to build and test it.
+
+If your agent supports skills, install the `add-provider` skill in the adapter's repository instead; it carries the same guidance and loads when the agent needs it:
+
+```sh
+npx skills add pandemicsyn/sandbar --skill add-provider
+```
+
+Otherwise, replace the bracketed fields and copy this prompt into an agent with access to the integration repository.
 
 ```text wrap title="Provider integration prompt"
 Implement a Sandbar adapter for [provider] in [repository or package].
