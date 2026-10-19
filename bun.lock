@@ -57,14 +57,14 @@
     },
     "packages/adapter": {
       "name": "@sandbar-sdk/adapter",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "zod": "4.6.5",
       },
     },
     "packages/cli": {
       "name": "@sandbar-sdk/cli",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
         "sandbar": "./dist/main.js",
       },
@@ -94,7 +94,7 @@
     },
     "packages/providers/boat": {
       "name": "@sandbar-sdk/boat",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@boatdev/sdk": "1.9.9",
         "@sandbar-sdk/adapter": "workspace:*",
@@ -106,7 +106,7 @@
     },
     "packages/providers/boxd": {
       "name": "@sandbar-sdk/boxd",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@boxd-sh/sdk": "0.2.15",
         "@grpc/grpc-js": "1.14.5",
@@ -119,7 +119,7 @@
     },
     "packages/providers/daytona": {
       "name": "@sandbar-sdk/daytona",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@sandbar-sdk/adapter": "workspace:*",
         "zod": "4.6.5",
@@ -131,7 +131,7 @@
     },
     "packages/providers/e2b": {
       "name": "@sandbar-sdk/e2b",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@sandbar-sdk/adapter": "workspace:*",
         "e2b": "2.51.0",
@@ -152,7 +152,7 @@
     },
     "packages/providers/modal": {
       "name": "@sandbar-sdk/modal",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@bufbuild/protobuf": "2.0.0",
         "@grpc/grpc-js": "1.14.5",
@@ -166,7 +166,7 @@
     },
     "packages/providers/runloop": {
       "name": "@sandbar-sdk/runloop",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@sandbar-sdk/adapter": "workspace:*",
         "zod": "4.6.5",
@@ -177,7 +177,7 @@
     },
     "packages/providers/vercel": {
       "name": "@sandbar-sdk/vercel",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@sandbar-sdk/adapter": "workspace:*",
         "tar-stream": "3.2.2",
@@ -190,7 +190,7 @@
     },
     "packages/sdk": {
       "name": "sandbar-sdk",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@opentelemetry/api": "1.9.1",
         "@sandbar-sdk/adapter": "workspace:*",
