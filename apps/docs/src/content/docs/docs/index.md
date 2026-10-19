@@ -45,6 +45,6 @@ The [Tested provider support](/docs/providers/support/) matrix shows which opera
 | [Boat](/docs/providers/boat/)             | Experimental. Full Ubuntu VMs with commands, files, archive/resume and renewal.                       |
 | [Runloop](/docs/providers/runloop/)       | Experimental; Runloop sign-ups are invite-only. Devboxes with blocked egress, snapshots and previews. |
 | [Vercel Sandbox](/docs/providers/vercel/) | Short-lived Node 24 sandboxes with commands and files.                                                |
-| [Modal](/docs/direct-quickstart/)         | Experimental. Not yet published to npm.                                                               |
+| [Modal](/docs/direct-quickstart/)         | Experimental. Commands, files and processes in Modal sandboxes.                                       |
 
 For API details, use the [TypeScript reference](/docs/reference/typescript/). To add a provider, start with [Write an adapter](/docs/guides/write-an-adapter/).

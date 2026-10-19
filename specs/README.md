@@ -4,7 +4,7 @@ This directory holds current contracts and focused future design. [ROADMAP.md](.
 
 ## Implemented adapters and release
 
-Daytona, E2B, boxd and Vercel are separately installed adapters; Modal remains experimental and outside the initial release group. [Package conventions](package-conventions.md) records the six-package 0.1.0 release group. Versioning, publication and live qualification are separate statuses.
+Daytona, E2B, boxd and Vercel are separately installed adapters; Modal remains experimental and joined the release group in 0.7.0. [Package conventions](package-conventions.md) records the six-package 0.1.0 release group. Versioning, publication and live qualification are separate statuses.
 
 The [Vercel adapter](../packages/providers/vercel/README.md) landed in #93: disposable immutable sessions, bounded binary execution, binary file overwrite and confirmed compute stop with retained named metadata. Its capture helper is implemented; [live qualification](../packages/providers/vercel/qualification/support.md) remains not-run. Snapshots, volumes, stdin and interactive processes are unsupported. Provider implementation is no longer queued as research.
 

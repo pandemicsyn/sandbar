@@ -16,6 +16,7 @@
       "@sandbar-sdk/boxd",
       "@sandbar-sdk/boat",
       "@sandbar-sdk/runloop",
+      "@sandbar-sdk/modal",
       "@sandbar-sdk/vercel",
       "@sandbar-sdk/cli"
     ]
@@ -24,7 +25,7 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@sandbar-sdk/modal"],
+  "ignore": [],
   "privatePackages": {
     "version": false,
     "tag": false
