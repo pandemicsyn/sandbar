@@ -44,6 +44,6 @@ The [Tested provider support](/docs/providers/support/) matrix shows which opera
 | [boxd](/docs/providers/boxd/)             | Experimental. MicroVM sandboxes with commands, files and reconnecting to running sandboxes. |
 | [Boat](/docs/providers/boat/)             | Experimental. Full Ubuntu VMs with commands, files, archive/resume and renewal.             |
 | [Vercel Sandbox](/docs/providers/vercel/) | Short-lived Node 24 sandboxes with commands and files.                                      |
-| [Modal](/docs/direct-quickstart/)         | Experimental. Not yet published to npm.                                                     |
+| [Modal](/docs/direct-quickstart/)         | Experimental. Commands, files and processes in Modal sandboxes.                             |
 
 For API details, use the [TypeScript reference](/docs/reference/typescript/). To add a provider, start with [Write an adapter](/docs/guides/write-an-adapter/).

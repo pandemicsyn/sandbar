@@ -44,7 +44,7 @@ The unpublished `sandbar-sdk/daytona` and `sandbar-sdk/e2b` subpaths are removed
 
 Daytona and E2B remain first-class official integrations maintained in this monorepo. Separate installation does not imply experimental or community support. Implementation, deterministic fixture qualification, packed qualification and live qualification remain distinct statuses.
 
-Modal remains separately installed and experimental, with its existing release status unchanged. Its private version-sensitive transport, uncertain image-build recovery and unrun live scenarios remain documented limitations. It is not a 1.0 release gate.
+Modal remains separately installed and experimental, and is published in the lockstep release group. Its private version-sensitive transport, uncertain image-build recovery and unrun live scenarios remain documented limitations. It is not a 1.0 release gate.
 
 boxd (#82) and Vercel (#93) are implemented and included in the initial release group; boxd retains its experimental support status. Vercel provides disposable immutable sessions, bounded binary execution and compute stop with retained named metadata. Its [provider README](../packages/providers/vercel/README.md) records REST stability and unrun live qualification; [boxd](../packages/providers/boxd/README.md) records its scoped live baseline. Islo and Tensorlake remain candidates for further research; [the roadmap](../ROADMAP.md) owns sequencing. The fake provider remains a deterministic development fixture.
 
@@ -58,7 +58,7 @@ Private implementation workspaces may be bundled into adapter artifacts. Their u
 
 ## Implementation and release acceptance
 
-The initial 0.1.0 fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, `@sandbar-sdk/boxd`, `@sandbar-sdk/boat`, and `@sandbar-sdk/vercel`; `@sandbar-sdk/cli` joins the group from its first release. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph. Modal remains outside this group.
+The initial 0.1.0 fixed, lockstep public release group is `@sandbar-sdk/adapter`, `sandbar-sdk`, `@sandbar-sdk/daytona`, `@sandbar-sdk/e2b`, `@sandbar-sdk/boxd`, `@sandbar-sdk/boat`, and `@sandbar-sdk/vercel`; `@sandbar-sdk/cli` joins the group from its first release and experimental `@sandbar-sdk/modal` from 0.7.0. Separate installation does not require independent release infrastructure. Keep the existing release machinery and release the actual distributable graph.
 
 Qualify real tarballs in isolated consumers: core alone, core plus each released provider, combined Daytona/E2B, and an independently authored adapter. Verify strict NodeNext declarations, Node/Bun execution, private-workspace isolation and npm/pnpm/Bun installation. Archive overrides may resolve transitive local packages without adding undeclared root dependencies.
 
