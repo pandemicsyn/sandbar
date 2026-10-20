@@ -12,6 +12,32 @@ for (const relative of ["index.html", "docs/index.html", "404.html", "pagefind/p
 
 const page = await readFile(dist + "docs/index.html", "utf8");
 
+// Starlight adds @astrojs/sitemap because `site` is set; the landing page must be listed too.
+const sitemapIndex = await readFile(dist + "sitemap-index.xml", "utf8").catch(() => {
+  throw new Error("Missing static output: sitemap-index.xml");
+});
+
+const sitemapUrls = new Set();
+
+for (const [, loc] of sitemapIndex.matchAll(/<loc>([^<]+)<\/loc>/g)) {
+  const file = dist + new URL(loc).pathname.replace(/^\//, "");
+
+  const sitemap = await readFile(file, "utf8").catch(() => {
+    throw new Error(`Sitemap index lists missing file: ${loc}`);
+  });
+
+  for (const [, url] of sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)) sitemapUrls.add(url);
+}
+
+for (const url of ["https://sandbarsdk.dev/", "https://sandbarsdk.dev/docs/"]) {
+  if (!sitemapUrls.has(url)) throw new Error(`Sitemap lacks ${url}`);
+}
+
+const robots = await readFile(dist + "robots.txt", "utf8");
+
+if (!robots.includes("Sitemap: https://sandbarsdk.dev/sitemap-index.xml"))
+  throw new Error("robots.txt does not point at the sitemap");
+
 if (!page.includes("<title>") || !page.includes("sandbarsdk.dev"))
   throw new Error("Docs metadata missing");
 
