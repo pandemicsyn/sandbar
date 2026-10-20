@@ -38,6 +38,8 @@ const robots = await readFile(dist + "robots.txt", "utf8");
 if (!robots.includes("Sitemap: https://sandbarsdk.dev/sitemap-index.xml"))
   throw new Error("robots.txt does not point at the sitemap");
 
+if (/^Disallow:\s*\S/m.test(robots)) throw new Error("robots.txt blocks crawlers");
+
 if (!page.includes("<title>") || !page.includes("sandbarsdk.dev"))
   throw new Error("Docs metadata missing");
 
@@ -100,7 +102,10 @@ for (const [source, html] of pageText) {
 if (errors.length) throw new Error(errors.join("\n"));
 
 for (const [path, html] of pageText) {
-  if (!html.includes("noindex")) throw new Error(`Development page lacks noindex: ${path}`);
+  // Astro's redirect stubs carry noindex on purpose.
+  if (html.includes('http-equiv="refresh"')) continue;
+
+  if (html.includes("noindex")) throw new Error(`Public page carries noindex: ${path}`);
 }
 
 console.log(
