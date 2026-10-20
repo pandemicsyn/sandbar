@@ -3,10 +3,16 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import {
   AdapterError,
+  assertResourceScope,
   defineAdapter,
+  resolveSnapshot,
   ResourceMinimums,
+  type AttemptContext,
   type Fact,
+  type ResourceReference,
   type SandboxResources,
+  type SnapshotInfo,
+  type SnapshotProfile,
 } from "@sandbar-sdk/adapter";
 import {
   createSdkTransport,
@@ -65,6 +71,36 @@ const WriteToken = z.strictObject({ expectedBytes: z.number().int().min(0).max(M
 
 const DestroyToken = z.strictObject({ id: z.string().min(1).max(128) });
 
+/** Modal keeps a filesystem snapshot image for 30 days from creation, then deletes it. */
+const SNAPSHOT_RETENTION_SECONDS = 30 * 86_400;
+
+const snapshotProfile: SnapshotProfile = {
+  id: "modal-filesystem",
+  preserve: "filesystem",
+  sourceStates: ["running"],
+  // Modal does not document whether a filesystem snapshot pauses the source; claim no less.
+  interruption: "pause",
+  sourceAfter: "unchanged",
+  connections: "unknown",
+  consistency: "unknown",
+  restoreExecution: "fresh",
+  mountHandling: "none",
+  minimumRetentionSeconds: SNAPSHOT_RETENTION_SECONDS,
+};
+
+const snapshotSupport = {
+  status: "supported" as const,
+  value: { profiles: [snapshotProfile], defaultProfileId: snapshotProfile.id },
+};
+
+/** A restored sandbox is an ordinary Modal create from the snapshot image. */
+const restoreSupport = {
+  networkPolicies: ["blocked"],
+  resources: false,
+  mounts: false,
+  independentLifecycle: true,
+};
+
 function writeCount(bytes: Uint8Array): number | undefined {
   const receipt = new TextDecoder().decode(bytes).trim();
 
@@ -75,6 +111,13 @@ function writeCount(bytes: Uint8Array): number | undefined {
 }
 
 type RecordValue = z.output<typeof RecordSchema>;
+
+type PreparedCreate = {
+  imageId: string;
+  ociReference?: string | undefined;
+  labels: Record<string, string>;
+  env?: Record<string, string> | undefined;
+};
 
 /** Modal does not report reservations back, so the adapter records the full one in a tag. */
 const RESOURCES_TAG = "sandbar_resources";
@@ -162,6 +205,15 @@ export function createModalAdapter(
         };
       };
 
+      const scope = {
+        authority: { kind: "app", id: appId },
+        partition: {
+          endpoint: MODAL_ENDPOINT,
+          environment: config.environment,
+          region: config.region ?? "",
+        },
+      };
+
       const find = async (id: string): Promise<RecordValue | null> => {
         await verify();
 
@@ -174,15 +226,144 @@ export function createModalAdapter(
         return null;
       };
 
+      const snapshotReference = (
+        id: string,
+        ownership: ResourceReference["ownership"] = "unknown",
+      ): ResourceReference & { kind: "snapshot" } => ({
+        version: 1,
+        kind: "snapshot",
+        provider: "modal",
+        scope,
+        nativeId: id,
+        ownership,
+      });
+
+      const checkSnapshot = (ref: ResourceReference) => {
+        assertResourceScope(ref, { provider: "modal", scope });
+
+        if (
+          ref.kind !== "snapshot" ||
+          ref.generation !== undefined ||
+          !ModalImageId.safeParse(ref.nativeId).success
+        )
+          throw new AdapterError("CONFLICT", "Invalid Modal snapshot identity");
+      };
+
+      /** Modal reports nothing about an image beyond its ID, so only capture knows its source. */
+      const snapshotInfo = (
+        ref: ResourceReference & { kind: "snapshot" },
+        source: { id: string; createdAt: string } | null,
+      ): SnapshotInfo => ({
+        reference: ref,
+        preserve: "filesystem",
+        restoreExecution: "fresh",
+        consistency: "unknown",
+        source: source && { id: source.id, class: "modal-sandbox" },
+        state: "ready",
+        createdAt: source?.createdAt ?? null,
+        expiration: "unknown",
+        excludedPaths: null,
+        mounts: [],
+        // The adapter never mounts volumes, and Modal leaves mounts out of the root filesystem.
+        mountHandling: "none",
+        restore: restoreSupport,
+        dependencies: [],
+        nativeDependencies: null,
+      });
+
+      const requireSnapshot = async (ref: ResourceReference) => {
+        checkSnapshot(ref);
+        await verify();
+
+        if (!(await transport.imageExists(ref.nativeId)))
+          throw new AdapterError("NOT_FOUND", "Modal snapshot image is unavailable or expired");
+      };
+
+      const submitCreate = async (input: PreparedCreate, ctx: AttemptContext) => {
+        if (ctx.submissionId.length >= 64)
+          return ctx.reject("INVALID_ARGUMENT", "Modal sandbox name exceeds native limit");
+
+        try {
+          const request: Parameters<ModalTransport["create"]>[0] = {
+            appId,
+            imageId: input.imageId,
+            name: ctx.submissionId,
+            tags: {
+              ...input.labels,
+              sandbar_submission: ctx.submissionId,
+              sandbar_operation: ctx.operationId,
+            },
+            timeoutMs: config.timeoutSeconds * 1000,
+          };
+
+          if (config.resources?.vcpus !== undefined) request.cpu = config.resources.vcpus;
+
+          if (config.resources?.memoryMiB !== undefined)
+            request.memoryMiB = config.resources.memoryMiB;
+
+          if (request.cpu !== undefined && request.memoryMiB !== undefined)
+            request.tags[RESOURCES_TAG] = `${request.cpu}/${request.memoryMiB}`;
+
+          if (input.ociReference) request.ociReference = input.ociReference;
+
+          if (input.env) request.env = input.env;
+
+          if (config.region) request.regions = [config.region];
+          const id = await transport.create(request);
+
+          if (!/^[A-Za-z0-9_-]{1,128}$/.test(id))
+            return ctx.unknown("Modal returned an invalid sandbox ID");
+
+          const record = await transport.findByName(
+            config.appName,
+            config.environment,
+            ctx.submissionId,
+          );
+
+          if (
+            !record ||
+            record.id !== id ||
+            record.tags.sandbar_submission !== ctx.submissionId ||
+            record.tags.sandbar_operation !== ctx.operationId
+          )
+            return ctx.unknown("Modal create identity could not be correlated");
+
+          return { id, state: record.running ? ("running" as const) : ("unknown" as const) };
+        } catch (error) {
+          if (error instanceof ModalCreateRejected)
+            return error.imageBuilt
+              ? ctx.unknown(`${error.message}; the built image remains; observe without replay`)
+              : ctx.reject(error.code, error.message);
+
+          return ctx.unknown("Modal create response unavailable; observe without replay");
+        }
+      };
+
+      const observeCreate = async (attempt: { submissionId: string; operationId: string }) => {
+        await verify();
+
+        const record = await transport.findByName(
+          config.appName,
+          config.environment,
+          attempt.submissionId,
+        );
+
+        if (
+          !record ||
+          record.tags.sandbar_submission !== attempt.submissionId ||
+          record.tags.sandbar_operation !== attempt.operationId
+        )
+          return null;
+        const checked = RecordSchema.parse(record);
+
+        return {
+          id: checked.id,
+          state: checked.running ? ("running" as const) : ("unknown" as const),
+        };
+      };
+
       return {
-        scope: {
-          authority: { kind: "app", id: appId },
-          partition: {
-            endpoint: MODAL_ENDPOINT,
-            environment: config.environment,
-            region: config.region ?? "",
-          },
-        },
+        scope,
         defaultImage: config.image,
         supports: {
           images: ["prepared", "oci"],
@@ -225,87 +406,8 @@ export function createModalAdapter(
               env: input.env,
             };
           },
-          async submit(input, ctx) {
-            if (ctx.submissionId.length >= 64)
-              return ctx.reject("INVALID_ARGUMENT", "Modal sandbox name exceeds native limit");
-
-            try {
-              const request: Parameters<ModalTransport["create"]>[0] = {
-                appId,
-                imageId: input.imageId,
-                name: ctx.submissionId,
-                tags: {
-                  ...input.labels,
-                  sandbar_submission: ctx.submissionId,
-                  sandbar_operation: ctx.operationId,
-                },
-                timeoutMs: config.timeoutSeconds * 1000,
-              };
-
-              if (config.resources?.vcpus !== undefined) request.cpu = config.resources.vcpus;
-
-              if (config.resources?.memoryMiB !== undefined)
-                request.memoryMiB = config.resources.memoryMiB;
-
-              if (request.cpu !== undefined && request.memoryMiB !== undefined)
-                request.tags[RESOURCES_TAG] = `${request.cpu}/${request.memoryMiB}`;
-
-              if (input.ociReference) request.ociReference = input.ociReference;
-
-              if (input.env) request.env = input.env;
-
-              if (config.region) request.regions = [config.region];
-              const id = await transport.create(request);
-
-              if (!/^[A-Za-z0-9_-]{1,128}$/.test(id))
-                return ctx.unknown("Modal returned an invalid sandbox ID");
-
-              const record = await transport.findByName(
-                config.appName,
-                config.environment,
-                ctx.submissionId,
-              );
-
-              if (
-                !record ||
-                record.id !== id ||
-                record.tags.sandbar_submission !== ctx.submissionId ||
-                record.tags.sandbar_operation !== ctx.operationId
-              )
-                return ctx.unknown("Modal create identity could not be correlated");
-
-              return { id, state: record.running ? ("running" as const) : ("unknown" as const) };
-            } catch (error) {
-              if (error instanceof ModalCreateRejected)
-                return error.imageBuilt
-                  ? ctx.unknown(`${error.message}; the built image remains; observe without replay`)
-                  : ctx.reject(error.code, error.message);
-
-              return ctx.unknown("Modal create response unavailable; observe without replay");
-            }
-          },
-          async observe(attempt) {
-            await verify();
-
-            const record = await transport.findByName(
-              config.appName,
-              config.environment,
-              attempt.submissionId,
-            );
-
-            if (
-              !record ||
-              record.tags.sandbar_submission !== attempt.submissionId ||
-              record.tags.sandbar_operation !== attempt.operationId
-            )
-              return null;
-            const checked = RecordSchema.parse(record);
-
-            return {
-              id: checked.id,
-              state: checked.running ? ("running" as const) : ("unknown" as const),
-            };
-          },
+          submit: submitCreate,
+          observe: observeCreate,
         },
         destroy: {
           recovery: { version: 1, token: DestroyToken },
@@ -374,6 +476,136 @@ export function createModalAdapter(
             items: page.items.map((item) => ({ ...item, reference: null })),
             nextCursor: page.nextCursor,
           };
+        },
+        snapshotProfiles: async () => snapshotSupport,
+        resourceCapabilities: async () => ({
+          restore: { status: "supported" as const, value: restoreSupport },
+          volumes: {
+            status: "unsupported" as const,
+            reason: "Modal volumes are not exposed as Sandbar volumes yet",
+          },
+          mounts: {
+            status: "unsupported" as const,
+            reason: "Modal volume mounts are not exposed as Sandbar mounts yet",
+          },
+        }),
+        snapshotCapture: {
+          async prepare(input) {
+            const record = await find(input.sandbox.id);
+
+            if (!record)
+              throw new AdapterError(
+                "NOT_FOUND",
+                "Modal sandbox was not found in the verified App",
+              );
+
+            const plan = resolveSnapshot(
+              snapshotSupport,
+              input.request,
+              record.running ? "running" : "unknown",
+            );
+
+            if (plan.status !== "supported") throw new AdapterError("UNSUPPORTED", plan.reason);
+
+            if (input.request.retention?.cleanupAfterSeconds !== undefined)
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "Modal snapshots keep the native 30-day retention; a custom cleanup is not supported",
+              );
+
+            return input;
+          },
+          async submit(input, ctx) {
+            let imageId: string;
+
+            try {
+              imageId = await transport.snapshotFilesystem(input.sandbox.id);
+            } catch (error) {
+              if (error instanceof ModalCreateRejected)
+                return ctx.reject(error.code, error.message);
+
+              // Modal names no image until the call returns, so a lost response leaves nothing to
+              // observe. Any image it made expires with Modal's 30-day retention.
+              return ctx.unknown(
+                "Modal filesystem snapshot response was not confirmed; any image it made expires in 30 days; do not replay",
+              );
+            }
+
+            if (!ModalImageId.safeParse(imageId).success)
+              return ctx.unknown("Modal returned an invalid snapshot image ID; do not replay");
+            const createdAt = new Date().toISOString();
+            const reference = snapshotReference(imageId, "verified-created");
+
+            return {
+              snapshot: snapshotInfo(reference, { id: input.sandbox.id, createdAt }),
+              capture: {
+                preserve: "filesystem" as const,
+                interruption: snapshotProfile.interruption,
+                restoreExecution: "fresh" as const,
+              },
+              source: { state: "running" as const, connections: snapshotProfile.connections },
+              retainedResources: [reference],
+            };
+          },
+        },
+        snapshotRestore: {
+          async prepare(input) {
+            const { request } = input;
+
+            if (request.resources || request.mounts?.length)
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "Modal restores keep the configured size and take no mounts",
+              );
+
+            if (!restoreSupport.networkPolicies.includes(request.networkPolicy))
+              throw new AdapterError("UNSUPPORTED", 'Modal network policy must be "blocked"');
+            await requireSnapshot(input.snapshot);
+
+            return input;
+          },
+          async submit(input, ctx) {
+            return submitCreate({ imageId: input.snapshot.nativeId, labels: {} }, ctx);
+          },
+          async observe(attempt) {
+            if (attempt.resource) checkSnapshot(attempt.resource);
+
+            return observeCreate(attempt);
+          },
+        },
+        snapshotDelete: {
+          async prepare(ref) {
+            await requireSnapshot(ref);
+
+            return ref;
+          },
+          async submit(ref, ctx) {
+            try {
+              return (await transport.deleteImage(ref.nativeId)) === "deleted"
+                ? { deleted: true as const, reference: ref }
+                : ctx.reject("NOT_FOUND", "Modal snapshot image is unavailable or expired");
+            } catch {
+              return ctx.unknown(
+                "Modal snapshot deletion was not confirmed; inspect without replay",
+              );
+            }
+          },
+          async observe(attempt, ctx) {
+            if (!attempt.resource)
+              return ctx.unknown("Modal snapshot deletion identity is unavailable; do not replay");
+            checkSnapshot(attempt.resource);
+            await verify();
+
+            return (await transport.imageExists(attempt.resource.nativeId))
+              ? ctx.unknown("Modal snapshot image still exists; deletion was not confirmed")
+              : { deleted: true as const, reference: attempt.resource };
+          },
+        },
+        async snapshotInspect(ref) {
+          await requireSnapshot(ref);
+
+          // SAFETY: requireSnapshot checked the reference kind.
+          return snapshotInfo(ref as ResourceReference & { kind: "snapshot" }, null);
         },
         exec: {
           finiteStdin: "bytes",
