@@ -24,6 +24,7 @@ const implemented = new Set([
   "reopening",
   "volumes",
   "persistence",
+  "snapshots",
 ]);
 
 const notes: Partial<Record<keyof typeof features, string>> = {
@@ -48,7 +49,7 @@ const notes: Partial<Record<keyof typeof features, string>> = {
   persistence:
     "Whole-disk create-time read-only/read-write mounts, one machine per disk even read-only. Unknown durability requires explicit allow-unconfirmed cleanup. Native host placement restrictions may reject multi-disk creates. No live qualification yet.",
   snapshots:
-    "Native capture is memory + disk, versioned latest-only. Exact immutable generation targeting for restore/delete is not established; the complete Sandbar snapshot workflow is unsupported. No capture-only allocation.",
+    "Native memory + disk capture of a running machine without mounted disks, with a brief pause; the source keeps running. Each capture uses an attempt-derived unique name and the reference pins the captured version, checked before inspect/restore/delete; a restore that boots another version is unknown with the machine identity. Restores resume captured processes in a new machine at the captured size, with no mounts or resizing. Provider-scope list; no scheduled deletion. No live qualification.",
   streaming:
     "Native execution stream cancellation kills the process group; it cannot satisfy Sandbar detach/disconnect. Sustained process/terminal IO unsupported.",
   network:
