@@ -10,6 +10,8 @@ import {
   type CreateInput,
   type ExecInput,
   type ExecOutput,
+  type ProcessExit,
+  type ProcessHandle,
   type SandbarClient,
   type SandboxHandle,
   type SandboxList,
@@ -1078,11 +1080,27 @@ function argvCommand(flags: Flags): ExecInput["command"] {
   return { kind: "argv", argv: [...flags.rest] };
 }
 
+/** The default `--timeout`, matching the SDK's exec deadline. */
+const defaultTimeoutSeconds = 300;
+
+/** A command whose output was already written live; only its exit code remains. */
+type Streamed = { streamed: true; exitCode: number };
+
+type Executed = ExecOutput | Streamed;
+
 async function execute(
   session: Session,
   box: SandboxHandle<true>,
   input: ExecInput,
-): Promise<ExecOutput> {
+  flags: Flags,
+): Promise<Executed> {
+  // JSON keeps its one envelope, so only human output streams.
+  if (!session.ctx.out.json && !flags.bool("no-stream")) {
+    const streamed = await streamExec(session, box, input);
+
+    if (streamed) return streamed;
+  }
+
   try {
     return await box.exec(input, { signal: session.ctx.signal });
   } catch (cause) {
@@ -1090,6 +1108,108 @@ async function execute(
 
     return cause.result;
   }
+}
+
+/**
+ * Write the command's output as it arrives where the provider streams bytes. Returns null when it
+ * cannot (rejected before anything was sent), so the caller runs the buffered exec instead.
+ * Streaming processes take no native deadline, so the CLI owns --timeout and terminates on it.
+ */
+async function streamExec(
+  session: Session,
+  box: SandboxHandle<true>,
+  input: ExecInput,
+): Promise<Streamed | null> {
+  const { out, signal } = session.ctx;
+  const seconds = input.deadlineSeconds ?? defaultTimeoutSeconds;
+  let running: ProcessHandle<"bytes">;
+
+  try {
+    running = await box.processes.start(
+      {
+        command: input.command,
+        cwd: input.cwd,
+        env: input.env,
+        stdin: input.stdin ? "pipe" : "closed",
+        output: { mode: "stream", format: "bytes" },
+      },
+      { signal },
+    );
+  } catch (cause) {
+    if (cause instanceof SandbarError && cause.code === "UNSUPPORTED" && cause.effect === "none")
+      return null;
+    throw cause;
+  }
+
+  const deadline = AbortSignal.timeout(seconds * 1000);
+  const stop = AbortSignal.any([signal, deadline]);
+
+  const pumped = (async () => {
+    for await (const chunk of running.output({ signal: stop }))
+      out.streams[chunk.stream](chunk.bytes);
+  })().then(
+    () => undefined,
+    (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  );
+
+  try {
+    if (input.stdin) {
+      await running.write(input.stdin, { signal: stop });
+      await running.closeStdin({ signal: stop });
+    }
+
+    const exit = await running.wait({ signal: stop });
+
+    await drained(running, pumped, exit, out);
+
+    return { streamed: true, exitCode: exit.exitCode };
+  } catch (cause) {
+    if (!stop.aborted) throw cause;
+
+    const stopped = await running
+      .terminate({ signal: AbortSignal.timeout(30_000) })
+      .then(() => "termination was requested")
+      .catch(() => "termination was not acknowledged, so it may still be running");
+
+    if (signal.aborted) {
+      out.note(`sandbar: interrupted; ${stopped}`);
+      throw cause;
+    }
+
+    throw new CliError(
+      "TIMEOUT",
+      `The command ran past --timeout ${seconds}s; ${stopped}`,
+      "raise --timeout for longer commands",
+      undefined,
+      "unknown",
+    );
+  } finally {
+    await running.detach();
+  }
+}
+
+/** Let output that arrived before the exit finish printing, without waiting forever on it. */
+async function drained(
+  running: ProcessHandle<"bytes">,
+  pumped: Promise<Error | undefined>,
+  exit: ProcessExit,
+  out: Output,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), 5_000);
+  });
+
+  const failure = await Promise.race([pumped, late]);
+  clearTimeout(timer);
+
+  if (failure === "late" || failure || !(await running.wait()).outputComplete)
+    out.note(
+      `sandbar: the command exited ${exit.exitCode} but its output may be incomplete${
+        failure instanceof Error ? `: ${failure.message}` : ""
+      }`,
+    );
 }
 
 function execSummary(result: ExecOutput): ExecSummary {
@@ -1101,9 +1221,9 @@ function execSummary(result: ExecOutput): ExecSummary {
   };
 }
 
-/** Human mode streams the command's own output; JSON mode carries it in the one envelope. */
-function printStreams(out: Output, result: ExecOutput): void {
-  if (out.json) return;
+/** Human mode prints the command's own output; JSON mode carries it in the one envelope. */
+function printStreams(out: Output, result: Executed): void {
+  if (out.json || "streamed" in result) return;
 
   if (result.stdout.byteLength) out.streams.stdout(result.stdout);
 
@@ -1116,8 +1236,10 @@ function printStreams(out: Output, result: ExecOutput): void {
 type RunSandbox = { name: string; id: string | null; kept: boolean };
 
 /** Print a finished command and return its exit code; a missing exit status is never success. */
-function finishExec(out: Output, result: ExecOutput, sandbox?: RunSandbox): number {
+function finishExec(out: Output, result: Executed, sandbox?: RunSandbox): number {
   printStreams(out, result);
+
+  if ("streamed" in result) return result.exitCode;
 
   if (result.exitCode === null)
     throw new CliError(
@@ -1137,7 +1259,7 @@ export async function execCommand(session: Session, flags: Flags): Promise<numbe
   const input = await execInput(session, flags, argvCommand(flags));
   const box = await session.reopen(record);
 
-  return finishExec(session.ctx.out, await execute(session, box, input));
+  return finishExec(session.ctx.out, await execute(session, box, input, flags));
 }
 
 type ShScript = { target: string; script: string };
@@ -1161,7 +1283,7 @@ export async function shCommand(session: Session, flags: Flags): Promise<number>
   const input = await execInput(session, flags, { kind: "shell", script });
   const box = await session.reopen(record);
 
-  return finishExec(session.ctx.out, await execute(session, box, input));
+  return finishExec(session.ctx.out, await execute(session, box, input, flags));
 }
 
 export async function runCommand(session: Session, flags: Flags): Promise<number> {
@@ -1175,7 +1297,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   const created = await createSandbox(session, { ...request, ifNotExists: false });
   const store = await session.store();
   const { out, signal } = session.ctx;
-  let result: ExecOutput | undefined;
+  let result: Executed | undefined;
   let failure: unknown;
 
   const sandbox = (kept: boolean): RunSandbox => ({
@@ -1188,7 +1310,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   if (created.unrecorded) failure = unrecordedError(created);
   else
     try {
-      result = await execute(session, created.box, input);
+      result = await execute(session, created.box, input, flags);
     } catch (cause) {
       failure = cause;
     }
@@ -1220,7 +1342,7 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
       {
         sandbox: created.record.name,
         reference: created.record.reference,
-        exec: result ? execSummary(result) : undefined,
+        exec: result && !("streamed" in result) ? execSummary(result) : undefined,
       },
       "partial",
     );

@@ -8,6 +8,10 @@ import {
   type AdapterSession,
   type AttemptContext,
   type ImageInfo,
+  type NativeProcess,
+  type NativeProcessExit,
+  type ProcessStartInput,
+  type ProcessStartContext,
   type Scope,
   type ObserveContext,
 } from "@sandbar-sdk/adapter";
@@ -116,6 +120,11 @@ export function createFakeAdapter(options: {
   token: string;
   fetch?: typeof fetch;
   imageBuild?: boolean;
+  /**
+   * Stream seeded exec fixtures as sustained byte processes. The output arrives at start; the
+   * process then stays running for `holdMs` (default 0) unless it is terminated, which exits 143.
+   */
+  processes?: { holdMs?: number };
 }) {
   return defineAdapter({
     name: "fake",
@@ -341,9 +350,86 @@ export function createFakeAdapter(options: {
         },
       };
 
+      const processes = options.processes && {
+        supports: { sustainedOutput: true as const, binaryOutput: true as const },
+        async start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> {
+          const submissionId = crypto.randomUUID();
+
+          const result = await driver.exec({
+            sandbox: native(input.sandbox.id),
+            identity: {
+              projectId: "adapter",
+              operationId: submissionId,
+              submissionId,
+              invocationKey: submissionId,
+            },
+            command: input.command,
+            cwd: input.cwd,
+            env: input.env,
+            deadlineSeconds: 300,
+            maxOutputBytes: input.maxOutputBytes,
+          });
+
+          if (result.status === "rejected")
+            throw new AdapterError(errorCodes[result.error.code], result.error.message);
+
+          if (
+            result.status !== "completed" ||
+            result.value.kind !== "execution" ||
+            result.value.observation.exitCode == null
+          )
+            throw new AdapterError("UNAVAILABLE", "Fake process start was not confirmed");
+          const observation = result.value.observation;
+          let confirmedExit: NativeProcessExit | undefined;
+          let finish: (exit: NativeProcessExit) => void = () => undefined;
+
+          const exited = new Promise<NativeProcessExit>((resolve) => {
+            finish = (exit) => {
+              confirmedExit ??= exit;
+              clearTimeout(timer);
+              resolve(confirmedExit);
+            };
+          });
+
+          const timer = setTimeout(
+            () => finish({ exitCode: observation.exitCode! }),
+            options.processes?.holdMs ?? 0,
+          );
+
+          for (const [stream, encoded] of [
+            ["stdout", observation.stdoutBase64],
+            ["stderr", observation.stderrBase64],
+          ] as const) {
+            const chunk = bytes(encoded);
+
+            if (chunk.byteLength) ctx.onOutputBytes?.({ stream, bytes: chunk });
+          }
+
+          return {
+            get confirmedExit() {
+              return confirmedExit;
+            },
+            wait: () => exited,
+            outputDone: exited.then(() => undefined),
+            detachOutput: async () => undefined,
+            async terminate() {
+              if (confirmedExit) return { status: "not-found" as const };
+              finish({ exitCode: 143 });
+
+              return { status: "requested" as const };
+            },
+            // A detached observer must not keep the local event loop alive for the held process.
+            detach: async () => {
+              timer.unref();
+            },
+          };
+        },
+      };
+
       return {
         ...images,
         imageBuild: options.imageBuild ? imageBuild : undefined,
+        processes,
         scope: bindingScope,
         supports: {
           images: ["prepared"],

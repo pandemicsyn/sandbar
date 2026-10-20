@@ -68,6 +68,56 @@ export const plain = bindAdapter(
   {},
 );
 
+const terminations = process.env.SANDBAR_FAKE_TERMINATIONS;
+
+/** The fake adapter with its byte-streaming process transport; SANDBAR_FAKE_TERMINATIONS logs terminations. */
+function streamingAdapter(holdMs: number) {
+  const processing = createFakeAdapter({ url: url!, token: token!, processes: { holdMs } });
+
+  return bindAdapter(
+    defineAdapter({
+      name: "fake",
+      displayName: "Fake test provider that streams process output",
+      config: z.strictObject({}),
+      credentials: z.strictObject({}),
+      async connect({ host }) {
+        const session = await processing.connect({ config: {}, credentials: {}, host });
+        const processes = session.processes!;
+
+        return {
+          ...session,
+          processes: {
+            ...processes,
+            async start(
+              input: Parameters<typeof processes.start>[0],
+              ctx: Parameters<typeof processes.start>[1],
+            ) {
+              const native = await processes.start(input, ctx);
+              const terminate = native.terminate!;
+
+              return Object.assign(native, {
+                async terminate(context: Parameters<typeof terminate>[0]) {
+                  if (terminations) await appendFile(terminations, "terminate\n");
+
+                  return terminate(context);
+                },
+              });
+            },
+          },
+        };
+      },
+    }),
+    {},
+    {},
+  );
+}
+
+/** Streams each seeded command's output, then exits, like Daytona, E2B or Vercel. */
+export const streaming = streamingAdapter(0);
+
+/** Streams the output, then keeps running for a minute unless it is terminated. */
+export const hanging = streamingAdapter(60_000);
+
 const builds = process.env.SANDBAR_FAKE_BUILDS;
 
 const building = createFakeAdapter({ url, token, imageBuild: true });

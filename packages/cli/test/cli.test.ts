@@ -1600,3 +1600,150 @@ describe("create-time environment", () => {
     expect(await fakeResources()).toEqual([]);
   });
 });
+
+describe("streaming exec output", () => {
+  let terminations: string;
+
+  beforeEach(async () => {
+    terminations = join(dir, "terminations.log");
+    await writeConfig({
+      default: "streaming",
+      profiles: {
+        streaming: { module: fixture, export: "streaming" },
+        hanging: { module: fixture, export: "hanging" },
+      },
+    });
+  });
+
+  async function terminated() {
+    return (await readFile(terminations, "utf8").catch(() => "")).split("\n").filter(Boolean);
+  }
+
+  /** Start the CLI and send `signal` once the command's first output reaches stdout. */
+  async function interrupt(args: string[], signal: NodeJS.Signals): Promise<Result> {
+    const child = Bun.spawn(["bun", main, ...args], {
+      cwd: dir,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: dir,
+        SANDBAR_CONFIG: join(dir, "sandbar.json"),
+        SANDBAR_STATE_DIR: join(dir, "state"),
+        SANDBAR_FAKE_URL: server.url.origin,
+        SANDBAR_FAKE_TOKEN: token,
+        SANDBAR_FAKE_TERMINATIONS: terminations,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderr = new Response(child.stderr).text();
+    const decoder = new TextDecoder();
+    let stdout = "";
+
+    const reader = child.stdout.getReader();
+
+    for (let read = await reader.read(); !read.done; read = await reader.read()) {
+      if (!stdout) child.kill(signal);
+      stdout += decoder.decode(read.value, { stream: true });
+    }
+
+    return { code: await child.exited, stdout, stderr: await stderr };
+  }
+
+  test("exec, sh and run stream stdout, stderr and the exit code where the provider can", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await seedExec(["make", "test"], 7, "building\n", "1 failed\n");
+
+    expect(await cli(["exec", "box", "--", "make", "test"])).toEqual({
+      code: 7,
+      stdout: "building\n",
+      stderr: "1 failed\n",
+    });
+
+    await seedExec("echo hi", 0, "hi\n");
+
+    expect(await cli(["sh", "box", "echo hi"])).toEqual({ code: 0, stdout: "hi\n", stderr: "" });
+
+    await seedExec(["make"], 3, "made\n");
+
+    expect(await cli(["run", "--prepared", "fake-starter", "--", "make"])).toEqual({
+      code: 3,
+      stdout: "made\n",
+      stderr: "",
+    });
+  });
+
+  test("output arrives before the command ends, and --timeout terminates it", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter", "--profile", "hanging"]);
+    await seedExec(["serve"], 0, "listening\n");
+
+    const result = await cli(["exec", "box", "--timeout", "1s", "--", "serve"], {
+      SANDBAR_FAKE_TERMINATIONS: terminations,
+    });
+
+    expect(result.code).toBe(125);
+    expect(result.stdout).toBe("listening\n");
+    expect(result.stderr).toContain("ran past --timeout 1s; termination was requested");
+    expect(await terminated()).toEqual(["terminate"]);
+  });
+
+  test("Ctrl-C terminates an exec and exits 130", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter", "--profile", "hanging"]);
+    await seedExec(["serve"], 0, "listening\n");
+
+    const result = await interrupt(["exec", "box", "--", "serve"], "SIGINT");
+
+    expect(result.code).toBe(130);
+    expect(result.stdout).toBe("listening\n");
+    expect(result.stderr).toContain("interrupted; termination was requested");
+    expect(await terminated()).toEqual(["terminate"]);
+    expect(await storeNames()).toEqual(["box.json"]);
+  });
+
+  test("SIGTERM terminates a run's command and still destroys its sandbox", async () => {
+    await seedExec(["serve"], 0, "listening\n");
+
+    const result = await interrupt(
+      ["run", "--profile", "hanging", "--prepared", "fake-starter", "--", "serve"],
+      "SIGTERM",
+    );
+
+    expect(result.code).toBe(143);
+    expect(result.stderr).toContain("was destroyed");
+    expect(await terminated()).toEqual(["terminate"]);
+    expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("--json and --no-stream keep the buffered exec, which a held process never reaches", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter", "--profile", "hanging"]);
+    await seedExec(["serve"], 0, "listening\n");
+
+    const json = await cli(["exec", "box", "--json", "--", "serve"]);
+
+    expect(envelope(json)).toMatchObject({
+      ok: true,
+      data: { exitCode: 0, stdout: "listening\n", stderr: "", truncated: false },
+    });
+    await seedExec(["serve"], 0, "listening\n");
+
+    expect(await cli(["exec", "box", "--no-stream", "--", "serve"])).toEqual({
+      code: 0,
+      stdout: "listening\n",
+      stderr: "",
+    });
+  });
+
+  test("providers without streaming keep buffered output", async () => {
+    await writeConfig({ default: "fake", profiles: { fake: { module: fixture, export: "fake" } } });
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await seedExec(["make", "test"], 7, "building\n", "1 failed\n");
+
+    expect(await cli(["exec", "box", "--", "make", "test"])).toEqual({
+      code: 7,
+      stdout: "building\n",
+      stderr: "1 failed\n",
+    });
+  });
+});
