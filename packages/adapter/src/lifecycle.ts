@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ResourceReference, SandboxInfoSchema } from "./state";
+import { PreserveSchema, ResourceReference, SandboxInfoSchema } from "./state";
 
 /** Provider-independent positive window; adapters resolve units before dispatch. */
 export const RenewRequest = z.strictObject({ forSeconds: z.number().int().positive().safe() });
@@ -42,7 +42,7 @@ export type RenewLimits = z.infer<typeof RenewLimits>;
 export const LifecycleIntent = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("suspend"),
-    preserve: z.enum(["filesystem", "filesystem+memory"]),
+    preserve: PreserveSchema,
   }),
   z.strictObject({
     action: z.literal("resume"),
@@ -62,7 +62,7 @@ export type ResolvedLifecycleInput = z.infer<typeof ResolvedLifecycleInput>;
 
 export const SuspendResult = z.strictObject({
   reference: RenewResult.shape.reference,
-  preserve: z.enum(["filesystem", "filesystem+memory"]),
+  preserve: PreserveSchema,
   processes: z.enum(["terminated", "preserved"]),
   connections: z.enum(["dropped", "preserved"]),
   observation: SandboxInfoSchema,

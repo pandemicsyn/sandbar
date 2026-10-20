@@ -45,7 +45,7 @@ Use request-specific, read-only checks: `box.checkSnapshot()` evaluates capture,
 
 ### Adapter defaults
 
-The adapter's typed setup owns real native choices. Daytona containers default to restarting a previously running source after capture; `snapshots.restartAfterCapture: false` leaves it stopped. E2B has no reusable-capture option to exclude memory or disable its native brief pause.
+The adapter's typed setup owns real native choices. Daytona containers default to restarting a previously running source after capture; `snapshots.restartAfterCapture: false` leaves it stopped. E2B `snapshots.preserve: Preserve.FILESYSTEM` requests a filesystem-only capture (native `memory: false`); there is no option to disable its native brief pause.
 
 | Behavior | Daytona containers | E2B reusable snapshots |
 | --- | --- | --- |
@@ -54,7 +54,11 @@ The adapter's typed setup owns real native choices. Daytona containers default t
 | Source already stopped | Capture and leave stopped | Native capture requires a running source; reject before effects |
 | Source processes after capture | Previous processes ended; restart does not recover them | Continue; active connections are dropped |
 | Restored sandbox | Fresh process execution | Captured process execution resumes |
-| Actual configuration choice | `restartAfterCapture: false` leaves a previously running source stopped | None for memory inclusion or automatic pause |
+| Actual configuration choice | `restartAfterCapture: false` leaves a previously running source stopped | `snapshots.preserve: Preserve.FILESYSTEM` captures disk only and restores with fresh execution; no option for automatic pause |
+
+### Capture and suspension depth (October 20, 2026)
+
+Where a provider offers a real choice between filesystem-only and filesystem-plus-memory state, adapters expose it in setup as `snapshots.preserve` and `lifecycle.suspension.preserve`, using the exported `Preserve` constants (`Preserve.FILESYSTEM`, `Preserve.FILESYSTEM_AND_MEMORY`; the plain strings stay valid). The configured value is an exact choice, not a minimum: `Preserve.FILESYSTEM` drops memory where the provider allows it. Omitting it keeps the provider's native default. A value the adapter cannot honor rejects at connect when the target class is known there, otherwise before any mutation of the affected sandbox. There is no per-call selector; `requirements.preserve` on a call only validates the configured behavior. Capture facts travel with the snapshot's history, so reopening it under a different configuration never reinterprets what was captured.
 
 Daytona's native container endpoint requires a stopped source; automatic stop/capture/start is Sandbar adapter orchestration. E2B performs its pause/resume natively. Do not add `allowSourceRestart`, `pauseOnly`, or mandatory `memory: "required"` settings to acknowledge fixed behavior. Daytona VM capture is a separate class-specific implementation: when implemented and qualified, it can expose an actual filesystem/memory selection with cold capture as its default. Do not advertise VM capture merely because the container adapter supports capture.
 

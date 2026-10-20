@@ -210,10 +210,12 @@ export type E2BStateTransport = {
   deleteTemplate?(id: string, signal?: AbortSignal): Promise<boolean>;
   verifyAddress(id: string, names?: string[]): Promise<void>;
   tags(id: string): Promise<{ tag: string; buildId: string }[]>;
+  /** `memory: false` requests a filesystem-only snapshot; omitted captures memory too. */
   capture(
     id: string,
     name?: string,
     signal?: AbortSignal,
+    memory?: boolean,
   ): Promise<{ snapshotId: string; names: string[] }>;
   snapshots(input: {
     limit: number;
@@ -264,7 +266,8 @@ export type E2BTransport = {
     limit: number,
     nextToken?: string,
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
-  suspend?: (id: string, signal: AbortSignal) => Promise<void>;
+  /** `memory: false` pauses filesystem-only; resume then cold-boots. */
+  suspend?: (id: string, signal: AbortSignal, memory?: boolean) => Promise<void>;
   resume?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
@@ -432,7 +435,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
   async function lifecyclePost(
     path: string,
-    body: { memory: true } | { timeout: number },
+    body: { memory: boolean } | { timeout: number },
     signal: AbortSignal,
   ): Promise<void> {
     const response = await fetcher(`${E2B_ENDPOINT}${path}`, {
@@ -720,7 +723,39 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
         return tags.map((tag) => ({ tag: tag.tag, buildId: tag.buildID }));
       },
-      capture: (id, name, signal) => Sandbox.createSnapshot(id, { ...opts, name, signal }),
+      async capture(id, name, signal, memory = true) {
+        if (memory) return Sandbox.createSnapshot(id, { ...opts, name, signal });
+        // The pinned SDK cannot request a filesystem-only snapshot; the API takes `memory: false`.
+        const request = name ? { name, memory: false } : { memory: false };
+
+        const response = await fetcher(
+          `${E2B_ENDPOINT}/sandboxes/${encodeURIComponent(id)}/snapshots`,
+          {
+            method: "POST",
+            headers: {
+              "X-API-Key": apiKey,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify(request),
+            redirect: "error",
+            signal: signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+              : AbortSignal.timeout(30_000),
+          },
+        );
+
+        const created = await readNative(
+          response,
+          z.object({
+            snapshotID: z.string().min(1).max(256),
+            names: z.array(z.string().max(256)).max(100),
+          }),
+          signal,
+        );
+
+        return { snapshotId: created.snapshotID, names: created.names };
+      },
       snapshots: readSnapshots,
       deleteSnapshot: (id, signal) => Sandbox.deleteSnapshot(id, { ...opts, signal }),
       async templates(input) {
@@ -939,8 +974,8 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
       return { items, nextToken: paginator.nextToken };
     },
-    async suspend(id, signal) {
-      await lifecyclePost(`/sandboxes/${encodeURIComponent(id)}/pause`, { memory: true }, signal);
+    async suspend(id, signal, memory = true) {
+      await lifecyclePost(`/sandboxes/${encodeURIComponent(id)}/pause`, { memory }, signal);
     },
     async resume(id, seconds, signal) {
       await lifecyclePost(

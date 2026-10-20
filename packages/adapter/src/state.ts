@@ -14,6 +14,19 @@ export const ResourceKind = z.enum([
 
 export type ResourceKind = z.infer<typeof ResourceKind>;
 
+/**
+ * What a snapshot or suspension keeps. Adapters accept these in setup (`snapshots.preserve`,
+ * `lifecycle.suspension.preserve`) and report them in profiles; the plain strings stay valid.
+ */
+export const Preserve = {
+  FILESYSTEM: "filesystem",
+  FILESYSTEM_AND_MEMORY: "filesystem+memory",
+} as const;
+
+export type Preserve = (typeof Preserve)[keyof typeof Preserve];
+
+export const PreserveSchema = z.enum([Preserve.FILESYSTEM, Preserve.FILESYSTEM_AND_MEMORY]);
+
 export const ResourceScope = z.strictObject({
   authority: z.strictObject({ kind: z.string().min(1).max(64), id: z.string().min(1).max(512) }),
   partition: z
@@ -100,7 +113,7 @@ export type Support<T> =
   | { status: "unknown"; reason: string };
 
 export const SnapshotRequirements = z.strictObject({
-  preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+  preserve: PreserveSchema.optional(),
   maxInterruption: z.enum(["none", "pause", "stop", "terminate"]).optional(),
   sourceAfter: z.enum(["unchanged", "stopped", "destroyed"]).optional(),
   consistency: z.enum(["crash-consistent", "caller-quiesced"]).optional(),
@@ -202,7 +215,7 @@ export const SandboxInfoSchema = z.strictObject({
 
 export const SnapshotProfile = z.strictObject({
   id: z.string().min(1).max(128),
-  preserve: z.enum(["filesystem", "filesystem+memory"]),
+  preserve: PreserveSchema,
   sourceStates: z.array(SandboxState).min(1).max(8),
   interruption: z.enum(["none", "pause", "stop", "terminate"]),
   sourceAfter: z.enum(["unchanged", "stopped", "destroyed"]),
@@ -290,7 +303,7 @@ export type RestoreRequest = z.infer<typeof RestoreRequest>;
 
 export const SnapshotInfo = z.strictObject({
   reference: ResourceReference.refine((ref) => ref.kind === "snapshot"),
-  preserve: z.enum(["filesystem", "filesystem+memory"]).nullable(),
+  preserve: PreserveSchema.nullable(),
   restoreExecution: z.enum(["fresh", "resume"]).nullable(),
   consistency: z.enum(["crash-consistent", "caller-quiesced", "unknown"]),
   source: z
@@ -368,7 +381,7 @@ export const OperationOutcome = z.discriminatedUnion("kind", [
       status: z.enum(["completed", "partial", "unknown"]),
       reference: ResourceReference.extend({ kind: z.literal("sandbox") }),
       acknowledged: z.boolean(),
-      preserve: z.enum(["filesystem", "filesystem+memory"]).optional(),
+      preserve: PreserveSchema.optional(),
       processes: z.enum(["terminated", "preserved"]).optional(),
       connections: z.enum(["dropped", "preserved"]).optional(),
       observation: SandboxInfoSchema.nullable(),
@@ -579,7 +592,7 @@ export type StateCapabilities = {
     reopen: Support<{}>;
     inspect: Support<{}>;
     suspend: Support<{
-      preserve: "filesystem" | "filesystem+memory";
+      preserve: Preserve;
       processes: "terminated" | "preserved";
       connections: "dropped" | "preserved";
     }>;
@@ -602,7 +615,7 @@ export type StateCapabilities = {
   volumes: Support<VolumeCapabilities>;
   mounts: Support<MountCapabilities>;
   suspension: Support<{
-    preserve: "filesystem" | "filesystem+memory";
+    preserve: Preserve;
     processes: "terminated" | "preserved";
     connections: "dropped" | "preserved";
   }>;
@@ -913,7 +926,7 @@ export const DirectCapabilities = z.strictObject({
       ),
       suspend: supportSchema(
         z.strictObject({
-          preserve: z.enum(["filesystem", "filesystem+memory"]),
+          preserve: PreserveSchema,
           processes: z.enum(["terminated", "preserved"]),
           connections: z.enum(["dropped", "preserved"]),
         }),
@@ -962,7 +975,7 @@ export const DirectCapabilities = z.strictObject({
   mounts: supportSchema(MountCapabilities).optional(),
   suspension: supportSchema(
     z.strictObject({
-      preserve: z.enum(["filesystem", "filesystem+memory"]),
+      preserve: PreserveSchema,
       processes: z.enum(["terminated", "preserved"]),
       connections: z.enum(["dropped", "preserved"]),
     }),

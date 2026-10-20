@@ -445,6 +445,12 @@ test("E2B suspend/resume native defaults and saved-reference workflow retain ide
   for (const preserve of [undefined, "filesystem", "filesystem+memory"] as const) {
     const f = fixture();
 
+    // The configured preservation is exact: filesystem pauses without memory.
+    const kept =
+      preserve === "filesystem"
+        ? { preserve: "filesystem", processes: "terminated" }
+        : { preserve: "filesystem+memory", processes: "preserved" };
+
     const config: Parameters<ReturnType<typeof fixture>["connect"]>[0] = {
       lifecycle: { lifetimeSeconds: 61 },
     };
@@ -458,14 +464,13 @@ test("E2B suspend/resume native defaults and saved-reference workflow retain ide
       const caps = await box.capabilities();
       expect(caps.lifecycle?.suspend).toMatchObject({
         status: "supported",
-        value: { preserve: "filesystem+memory", processes: "preserved", connections: "dropped" },
+        value: { ...kept, connections: "dropped" },
       });
       const op = await box.submitSuspend();
       const suspended = await op.wait();
       expect(suspended).toMatchObject({
         reference: saved,
-        preserve: "filesystem+memory",
-        processes: "preserved",
+        ...kept,
         connections: "dropped",
         observation: { state: "suspended" },
       });
@@ -521,7 +526,7 @@ test("E2B suspend/resume native defaults and saved-reference workflow retain ide
                 c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
             )
             .map((c) => c.body),
-        ).toEqual([{ memory: true }, { timeout: 600 }]);
+        ).toEqual([{ memory: preserve !== "filesystem" }, { timeout: 600 }]);
         expect(f.windows()).toEqual([]);
       } finally {
         await fresh.close();

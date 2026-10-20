@@ -63,12 +63,25 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 | Daytona container | Private filesystem                        | Stop, capture, then restart               | Fresh processes; RAM is not retained             |
 | E2B               | Private filesystem, RAM and process state | Pause and resume; active connections drop | Resume captured processes in independent compute |
 
-Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option.
+Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer.
 
 ```ts
 const captured = await source.snapshot({
   requirements: { preserve: "filesystem+memory", maxInterruption: "pause" },
 }); // E2B can satisfy this; Daytona rejects before stopping compute.
+```
+
+Where a provider offers both, choose what capture keeps once, in adapter setup, with the exported `Preserve` constants. The choice is exact: E2B's `Preserve.FILESYSTEM` skips memory, and restored sandboxes boot fresh. Omit it to keep the provider's default. A choice the adapter cannot honor rejects before any sandbox changes.
+
+```ts
+import { Preserve } from "sandbar-sdk";
+import { e2b } from "@sandbar-sdk/e2b";
+
+const adapter = e2b({
+  apiKey: process.env.E2B_API_KEY!,
+  snapshots: { preserve: Preserve.FILESYSTEM },
+  lifecycle: { suspension: { preserve: Preserve.FILESYSTEM } },
+});
 ```
 
 Pause application writers before capture if you need consistent data. Passing `consistency: "caller-quiesced"` records that you did so; Sandbar does not pause writers for you. Otherwise, consistency remains unknown unless the provider supplies evidence. `captured.capture` describes what was saved, and `captured.source` describes the source after capture.

@@ -1,4 +1,9 @@
-import { sandboxReference, type SandboxReference, type Sandbox } from "@sandbar-sdk/adapter";
+import {
+  Preserve,
+  sandboxReference,
+  type SandboxReference,
+  type Sandbox,
+} from "@sandbar-sdk/adapter";
 import { z } from "zod";
 import { resourceHistory } from "./resource-history";
 import {
@@ -68,6 +73,8 @@ export function e2bState(input: {
   scopeMarker: string;
   timeoutSeconds: number;
   allowPublicTraffic?: boolean;
+  /** What a capture keeps; filesystem-only sends `memory: false`. */
+  snapshotPreserve: Preserve;
   apiKey: string;
   find: (id: string, expected?: SandboxReference) => Promise<E2BRecord | null>;
 }) {
@@ -75,6 +82,21 @@ export function e2bState(input: {
   const state = transport.state;
   let volumeCreateEligibility: "unknown" | "supported" | "unavailable" = "unknown";
   const history = resourceHistory();
+  const memory = input.snapshotPreserve === Preserve.FILESYSTEM_AND_MEMORY;
+
+  // A filesystem-only capture leaves processes running and restores by cold boot. E2B does not
+  // document whether it still pauses the source, so claim a pause and unknown connections.
+  const depth = memory
+    ? {
+        preserve: Preserve.FILESYSTEM_AND_MEMORY,
+        restoreExecution: "resume" as const,
+        connections: "dropped" as const,
+      }
+    : {
+        preserve: Preserve.FILESYSTEM,
+        restoreExecution: "fresh" as const,
+        connections: "unknown" as const,
+      };
 
   const ref = (
     kind: "snapshot" | "volume",
@@ -106,9 +128,10 @@ export function e2bState(input: {
   ): SnapshotInfo {
     return {
       reference: ref("snapshot", id, ownership),
-      preserve: "filesystem+memory",
+      // Native listings do not say whether memory was captured; saved history does.
+      preserve: null,
       consistency: "unknown",
-      restoreExecution: "resume",
+      restoreExecution: null,
       source: knownSnapshots.has(id)
         ? { id: knownSnapshots.get(id)!.sourceId, class: "firecracker" }
         : null,
@@ -181,11 +204,9 @@ export function e2bState(input: {
     if (build.status === "building" || build.status === "waiting") info.state = "creating";
     const evidence = history.read(reference);
 
-    if (
-      evidence?.kind === "snapshot" &&
-      evidence.preserve === "filesystem+memory" &&
-      evidence.mounts === "none"
-    ) {
+    if (evidence?.kind === "snapshot" && evidence.preserve && evidence.mounts === "none") {
+      info.preserve = evidence.preserve;
+      info.restoreExecution = evidence.preserve === Preserve.FILESYSTEM ? "fresh" : "resume";
       info.mountHandling = "none";
       info.consistency = evidence.consistency ?? "unknown";
       info.reference.history = reference.history;
@@ -387,7 +408,7 @@ export function e2bState(input: {
     if (box.volumeMounts?.length)
       return {
         status: "unsupported" as const,
-        reason: "Memory captures with mounts are not implemented",
+        reason: "Captures with mounts are not implemented",
       };
 
     if (!box.envdVersion)
@@ -400,20 +421,29 @@ export function e2bState(input: {
       return { status: "unavailable" as const, reason: "Snapshots require envd >= 0.5.0" };
 
     const profile: SnapshotProfile = {
-      id: "e2b-memory-running",
-      preserve: "filesystem+memory",
+      id: memory ? "e2b-memory-running" : "e2b-filesystem-running",
+      preserve: depth.preserve,
       sourceStates: ["running"],
       interruption: "pause",
       sourceAfter: "unchanged",
-      connections: "dropped",
+      connections: depth.connections,
       consistency: "unknown",
-      restoreExecution: "resume",
+      restoreExecution: depth.restoreExecution,
       mountHandling: "none",
     };
 
     return {
       status: "supported" as const,
       value: { profiles: [profile], defaultProfileId: profile.id },
+    };
+  }
+
+  /** Capture facts from the snapshot's own history, never from the current configuration. */
+  function captured(info: SnapshotInfo) {
+    return {
+      preserve: info.preserve!,
+      interruption: "pause" as const,
+      restoreExecution: info.restoreExecution!,
     };
   }
 
@@ -431,15 +461,13 @@ export function e2bState(input: {
       if (token.generation) snapshot.generation = token.generation;
     }
 
-    const confirmed = info?.state === "ready" && !!snapshot?.generation;
+    const confirmed = info?.state === "ready" && !!info.preserve && !!snapshot?.generation;
 
     return {
       kind: "snapshot_capture",
       status: confirmed ? "partial" : "unknown",
       snapshot,
-      capture: confirmed
-        ? { preserve: "filesystem+memory", interruption: "pause", restoreExecution: "resume" }
-        : undefined,
+      capture: confirmed ? captured(info) : undefined,
       source,
       restart: confirmed && source?.state !== "running" ? { status: "uncertain" } : undefined,
     };
@@ -515,7 +543,7 @@ export function e2bState(input: {
           return ctx.reject("UNAVAILABLE", "Capture cancelled before dispatch");
         }
 
-        const created = await need().capture(box.id, undefined, ctx.signal);
+        const created = await need().capture(box.id, undefined, ctx.signal, memory);
 
         if (!/^[A-Za-z0-9_-]+:default$/.test(created.snapshotId))
           return ctx.unknown(
@@ -574,7 +602,7 @@ export function e2bState(input: {
             generation: info.reference.generation,
             sourceId: box.id,
             sourceClass: "firecracker",
-            preserve: "filesystem+memory",
+            preserve: depth.preserve,
             mounts: "none",
             consistency: info.consistency,
             deletion: {
@@ -584,6 +612,8 @@ export function e2bState(input: {
               public: native.public,
             },
           });
+          info.preserve = depth.preserve;
+          info.restoreExecution = depth.restoreExecution;
           token.snapshot = structuredClone(info.reference);
           await ctx.checkpoint(token);
           actual = await input.find(box.id);
@@ -591,7 +621,10 @@ export function e2bState(input: {
           if (actual)
             observedSource = {
               state: actual.state === "running" ? "running" : "suspended",
-              connections: info.state === "ready" ? "dropped" : "unknown",
+              connections:
+                info.state === "ready" && info.preserve !== Preserve.FILESYSTEM
+                  ? "dropped"
+                  : "unknown",
               observedAt: new Date().toISOString(),
             };
         } catch (error) {
@@ -628,14 +661,10 @@ export function e2bState(input: {
 
         return {
           snapshot: info,
-          capture: {
-            preserve: "filesystem+memory",
-            interruption: "pause",
-            restoreExecution: "resume",
-          },
+          capture: captured(info),
           source: {
             state: "running",
-            connections: "dropped",
+            connections: info.preserve === Preserve.FILESYSTEM ? "unknown" : "dropped",
             observedAt: observedSource?.observedAt,
           },
           retainedResources: [info.reference],
@@ -680,7 +709,7 @@ export function e2bState(input: {
           token.data.snapshot.generation !== token.data.generation ||
           evidence?.sourceId !== token.data.sourceId ||
           evidence.consistency !== token.data.consistency ||
-          evidence.preserve !== "filesystem+memory" ||
+          !evidence.preserve ||
           evidence.mounts !== "none"
         )
           return ctx.unknown("Saved snapshot custody differs from capture acknowledgement");
@@ -698,7 +727,10 @@ export function e2bState(input: {
           if (box)
             observedSource = {
               state: box.state === "running" ? "running" : "suspended",
-              connections: info.state === "ready" ? "dropped" : "unknown",
+              connections:
+                info.state === "ready" && info.preserve !== Preserve.FILESYSTEM
+                  ? "dropped"
+                  : "unknown",
               observedAt: new Date().toISOString(),
             };
         } catch {
@@ -724,14 +756,10 @@ export function e2bState(input: {
 
         return {
           snapshot: info,
-          capture: {
-            preserve: "filesystem+memory",
-            interruption: "pause",
-            restoreExecution: "resume",
-          },
+          capture: captured(info),
           source: {
             state: "running",
-            connections: "dropped",
+            connections: info.preserve === Preserve.FILESYSTEM ? "unknown" : "dropped",
             observedAt: observedSource?.observedAt,
           },
           retainedResources: [info.reference],
@@ -769,7 +797,7 @@ export function e2bState(input: {
           token.data.snapshot.generation !== token.data.generation ||
           evidence?.sourceId !== token.data.sourceId ||
           evidence.consistency !== token.data.consistency ||
-          evidence.preserve !== "filesystem+memory" ||
+          !evidence.preserve ||
           evidence.mounts !== "none"
         )
           return ctx.unknown("Saved snapshot custody differs from capture acknowledgement");
@@ -784,7 +812,10 @@ export function e2bState(input: {
           if (box)
             observedSource = {
               state: box.state === "running" ? "running" : "suspended",
-              connections: info.state === "ready" ? "dropped" : "unknown",
+              connections:
+                info.state === "ready" && info.preserve !== Preserve.FILESYSTEM
+                  ? "dropped"
+                  : "unknown",
               observedAt: new Date().toISOString(),
             };
         } catch {
