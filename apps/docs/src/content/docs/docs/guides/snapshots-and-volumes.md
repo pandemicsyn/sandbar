@@ -11,7 +11,7 @@ For TypeScript annotations, import `SandbarClient`, `SandboxHandle`, `SnapshotHa
 
 ## Capture and restore
 
-Start with a connection named `sandbar`, configured with a default environment and network policy as shown in [Getting started](/docs/direct-quickstart/). The adapter must support snapshot capture and restore. Adapters support different kinds of captured state, described [below](#what-capture-preserves).
+Start with a connection named `sandbar`, configured with a default environment and network policy as shown in [Getting started](/docs/direct-quickstart/). The adapter must support snapshot capture and restore. E2B and Daytona support different kinds of captured state, described [below](#what-capture-preserves).
 
 ```ts
 const source = await sandbar.sandboxes.create();
@@ -157,7 +157,7 @@ The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/
 
 | Workflow                               | Current support                                                                                                      |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Capture and restore private state      | Daytona, Vercel and Runloop filesystem capture; E2B and boxd filesystem and memory capture.                          |
+| Capture and restore private state      | Daytona filesystem capture; E2B and boxd filesystem and memory capture. Vercel snapshots are unsupported.            |
 | Capture a sandbox with external mounts | Unsupported by the Daytona, E2B and boxd adapters.                                                                   |
 | Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.  |
 | Override restore resource sizes        | Unsupported by Daytona, E2B and boxd; empty overrides are treated as omitted.                                        |
