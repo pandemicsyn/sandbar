@@ -30,6 +30,7 @@ function fixture(
     restartAfterCapture?: boolean;
     largeScope?: boolean;
     verified?: boolean;
+    sandboxClass?: string;
   } = {},
 ) {
   let scope: Scope = {
@@ -143,7 +144,7 @@ function fixture(
           organizationId: "org-one",
           target: "us",
           state,
-          sandboxClass: "container",
+          sandboxClass: options.sandboxClass ?? "container",
           volumes: modes.mounted ? [{ volumeId: "external", mountPath: "/mnt/data" }] : [],
         });
       }
@@ -195,7 +196,7 @@ function fixture(
           general: false,
           state: "active",
           sourceSandboxId: "source",
-          sandboxClass: "container",
+          sandboxClass: options.sandboxClass ?? "container",
           regionIds: ["us"],
         };
 
@@ -408,6 +409,67 @@ for (const variant of ["default", "stopped", "leave-stopped"] as const) {
     }
   });
 }
+
+for (const variant of ["default", "stopped"] as const) {
+  test(`Daytona Linux VM capture is cold and filesystem-only by default: ${variant}`, async () => {
+    const f = fixture({ stopped: variant === "stopped", sandboxClass: "linux-vm" });
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      const result = await source.snapshot();
+      expect(result.capture).toEqual({
+        preserve: "filesystem",
+        interruption: variant === "stopped" ? "none" : "stop",
+        restoreExecution: "fresh",
+      });
+      expect(await result.snapshot.inspect()).toMatchObject({
+        preserve: "filesystem",
+        restoreExecution: "fresh",
+        mountHandling: "none",
+        source: { id: "source", class: "linux-vm" },
+      });
+      expect(result.source.state).toBe(variant === "default" ? "running" : "stopped");
+      expect(f.calls).toMatchObject({
+        stop: variant === "stopped" ? 0 : 1,
+        capture: 1,
+        start: variant === "default" ? 1 : 0,
+      });
+
+      const fresh = await f.connect(undefined, "rotated-key");
+
+      try {
+        const opened = await fresh.snapshots.get(structuredClone(result.snapshot.reference));
+        expect(await opened.inspect()).toMatchObject({
+          preserve: "filesystem",
+          restoreExecution: "fresh",
+          source: { class: "linux-vm" },
+        });
+        // Without this adapter's capture history, a VM snapshot may hold memory.
+        const { history: _history, ...bare } = result.snapshot.reference;
+        const unowned = await fresh.snapshots.get({ ...bare, ownership: "unknown" });
+        expect(await unowned.inspect()).toMatchObject({ preserve: null, restoreExecution: null });
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+test("Daytona capture rejects unmapped sandbox classes before effects", async () => {
+  const f = fixture({ sandboxClass: "windows" });
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    await expect(source.snapshot()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+  } finally {
+    await client.close();
+  }
+});
 
 for (const request of [
   { requirements: { preserve: "filesystem+memory" as const } },

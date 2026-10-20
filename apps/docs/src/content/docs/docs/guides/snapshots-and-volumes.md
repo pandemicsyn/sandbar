@@ -63,7 +63,7 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 | Daytona container | Private filesystem                        | Stop, capture, then restart               | Fresh processes; RAM is not retained             |
 | E2B               | Private filesystem, RAM and process state | Pause and resume; active connections drop | Resume captured processes in independent compute |
 
-Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option.
+Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option.
 
 ```ts
 const captured = await source.snapshot({

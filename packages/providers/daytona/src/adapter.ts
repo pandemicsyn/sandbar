@@ -110,10 +110,34 @@ const Configuration = z
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });
 
+/** Native suspension by sandbox class: containers stop, Linux VMs pause with memory. */
+const suspensionFacts = {
+  container: { preserve: "filesystem", processes: "terminated", connections: "dropped" },
+  "linux-vm": { preserve: "filesystem+memory", processes: "preserved", connections: "dropped" },
+} as const;
+
+type SuspensionFacts = (typeof suspensionFacts)[keyof typeof suspensionFacts];
+
+function factsFor(preserve: SuspendResult["preserve"]): SuspensionFacts {
+  return preserve === "filesystem+memory" ? suspensionFacts["linux-vm"] : suspensionFacts.container;
+}
+
+/** A memory pause completes only at native paused; a stop completes at any inactive state. */
+function suspendedAs(observation: SandboxInfo, facts: SuspensionFacts) {
+  return facts.preserve === "filesystem+memory"
+    ? observation.nativeState === "paused"
+    : ["stopped", "suspended"].includes(observation.state);
+}
+
+/** A stopped VM has discarded memory, so a requested pause cannot be confirmed. */
+function lostMemory(observation: SandboxInfo, facts: SuspensionFacts) {
+  return facts.preserve === "filesystem+memory" && observation.nativeState === "stopped";
+}
+
 const SuspendToken = z.strictObject({
   acknowledged: z.literal(true),
-  preserve: z.literal("filesystem"),
-  processes: z.literal("terminated"),
+  preserve: z.enum(["filesystem", "filesystem+memory"]),
+  processes: z.enum(["terminated", "preserved"]),
   connections: z.literal("dropped"),
   completed: SuspendResult.omit({ reference: true })
     .extend({ observation: CompactObservation })
@@ -129,6 +153,8 @@ function compactCompletion(value: SuspendResult | ResumeResult) {
 
 const ResumeToken = z.strictObject({
   acknowledged: z.literal(true),
+  /** Read before dispatch; tokens saved before Linux VM pause was mapped resumed fresh. */
+  execution: z.enum(["fresh", "resumed"]).optional(),
   completed: ResumeResult.omit({ reference: true })
     .extend({ observation: CompactObservation })
     .optional(),
@@ -140,6 +166,7 @@ function suspendOutcome(
   reference: SandboxReference,
   acknowledged: boolean,
   observation: SandboxInfo | null,
+  facts: SuspensionFacts = suspensionFacts.container,
 ): OperationOutcome {
   if (!acknowledged)
     return {
@@ -155,9 +182,7 @@ function suspendOutcome(
     status: "partial",
     reference,
     acknowledged: true,
-    preserve: "filesystem",
-    processes: "terminated",
-    connections: "dropped",
+    ...facts,
     observation,
   };
 }
@@ -251,6 +276,7 @@ const states = new Map<string, import("@sandbar-sdk/adapter").SandboxState>([
   ["started", "running"],
   ["stopped", "stopped"],
   ["archived", "suspended"],
+  ["paused", "suspended"],
   ["starting", "restoring"],
   ["restoring", "restoring"],
   ["resuming", "restoring"],
@@ -416,12 +442,6 @@ export function createDaytonaAdapter(
     config: configSchema,
     credentials: Credentials,
     async connect({ config, credentials }) {
-      if (config.lifecycle?.suspension?.preserve === "filesystem+memory")
-        throw new AdapterError(
-          "UNSUPPORTED",
-          "Daytona container suspension preserves filesystem only",
-        );
-
       if (config.preview.access === "public")
         throw new AdapterError(
           "UNSUPPORTED",
@@ -486,6 +506,30 @@ export function createDaytonaAdapter(
         fetch: fetchImpl ?? fetch,
       });
 
+      const idlePolicy = (
+        value: Awaited<ReturnType<typeof resourceState.box>>,
+      ): SandboxInfo["idleStop"] => {
+        const minutes = (interval: number | null | undefined) =>
+          interval != null && Number.isSafeInteger(interval) && interval >= 0 ? interval : null;
+
+        const stop = minutes(value.autoStopInterval);
+
+        if (stop === null) return unknownSandboxFacts().idleStop;
+
+        if (stop > 0) return { status: "known", value: { seconds: stop * 60, action: "stop" } };
+
+        // Auto-stop and auto-pause are exclusive; only Linux VMs can pause when idle.
+        if (value.sandboxClass !== "linux-vm") return { status: "known", value: null };
+        const pause = minutes(value.autoPauseInterval);
+
+        if (pause === null) return unknownSandboxFacts().idleStop;
+
+        return {
+          status: "known",
+          value: pause === 0 ? null : { seconds: pause * 60, action: "suspend" },
+        };
+      };
+
       const inspection = async (
         id: string,
         expected?: SandboxReference,
@@ -529,18 +573,7 @@ export function createDaytonaAdapter(
           nativeState: value.state,
           observedAt: new Date().toISOString(),
           expires: nativeDeadline(value.autoDestroyAt, "sandbox"),
-          idleStop:
-            value.autoStopInterval != null &&
-            Number.isSafeInteger(value.autoStopInterval) &&
-            value.autoStopInterval >= 0
-              ? {
-                  status: "known",
-                  value:
-                    value.autoStopInterval === 0
-                      ? null
-                      : { seconds: value.autoStopInterval * 60, action: "stop" },
-                }
-              : unknownSandboxFacts().idleStop,
+          idleStop: idlePolicy(value),
           retention:
             value.autoDeleteInterval != null && Number.isSafeInteger(value.autoDeleteInterval)
               ? {
@@ -578,10 +611,10 @@ export function createDaytonaAdapter(
         if (!nativeBox.sandboxClass)
           throw new AdapterError("UNAVAILABLE", "Native sandbox class unavailable");
 
-        if (nativeBox.sandboxClass !== "container")
+        if (nativeBox.sandboxClass !== "container" && nativeBox.sandboxClass !== "linux-vm")
           throw new AdapterError(
             "UNSUPPORTED",
-            "Suspension supports known Daytona containers only",
+            "Suspension supports Daytona container and Linux VM sandboxes only",
           );
 
         if (!nativeBox.mountsKnown)
@@ -602,7 +635,24 @@ export function createDaytonaAdapter(
             "Suspension requires auto-delete disabled (negative interval)",
           );
 
-        return info;
+        return { info, facts: suspensionFacts[nativeBox.sandboxClass] };
+      };
+
+      const requiredPreserve = config.lifecycle?.suspension?.preserve;
+
+      /**
+       * Configured preservation is checked against the actual sandbox, never weakened. Either
+       * class can stop, so a configured filesystem suspension stops a Linux VM instead of pausing.
+       */
+      const suspendable = (native: SuspensionFacts) => {
+        if (!requiredPreserve || requiredPreserve === native.preserve) return native;
+
+        if (requiredPreserve === "filesystem") return suspensionFacts.container;
+
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Daytona container suspension preserves filesystem only; memory preservation requires a Linux VM sandbox",
+        );
       };
 
       const referenceFor = async (
@@ -700,6 +750,10 @@ export function createDaytonaAdapter(
         );
       };
 
+      // Daytona documents volumes for containers; mounted Linux VM restore is not mapped.
+      const mountedRestore = (info: import("@sandbar-sdk/adapter").SnapshotInfo) =>
+        info.source?.class !== "linux-vm";
+
       const validateRestore = async (
         input: import("@sandbar-sdk/adapter").SnapshotRestoreInput,
         ctx: import("@sandbar-sdk/adapter").ReadContext,
@@ -720,6 +774,12 @@ export function createDaytonaAdapter(
           );
 
         if (input.request.mounts?.length) {
+          if (!mountedRestore(info))
+            throw new AdapterError(
+              "UNSUPPORTED",
+              "Mounted restore of a Linux VM snapshot is not mapped",
+            );
+
           if (input.request.networkPolicy === "blocked")
             throw new AdapterError(
               "UNSUPPORTED",
@@ -938,7 +998,7 @@ export function createDaytonaAdapter(
         ) {
           const info = await resourceState.inspectSnapshot(ref, ctx);
           info.restore.networkPolicies = [...caps.networkPolicies];
-          info.restore.mounts = true;
+          info.restore.mounts = mountedRestore(info);
 
           return info;
         },
@@ -952,7 +1012,7 @@ export function createDaytonaAdapter(
 
           for (const info of result.items) {
             info.restore.networkPolicies = [...caps.networkPolicies];
-            info.restore.mounts = true;
+            info.restore.mounts = mountedRestore(info);
           }
 
           return result;
@@ -1448,11 +1508,15 @@ export function createDaytonaAdapter(
           },
         },
         async suspensionCapabilities(target, ctx) {
+          // Without a sandbox, report the configured preservation or the container default.
+          let facts = factsFor(requiredPreserve ?? "filesystem");
+
           if (target.sandbox) {
             try {
-              const info = await lifecycleSource(target.sandbox, ctx);
+              const source = await lifecycleSource(target.sandbox, ctx);
+              facts = suspendable(source.facts);
 
-              if (info.state !== "running")
+              if (source.info.state !== "running")
                 return {
                   status: "unavailable" as const,
                   reason: "Suspension requires running compute",
@@ -1478,19 +1542,12 @@ export function createDaytonaAdapter(
             }
           }
 
-          return {
-            status: "supported" as const,
-            value: {
-              preserve: "filesystem" as const,
-              processes: "terminated" as const,
-              connections: "dropped" as const,
-            },
-          };
+          return { status: "supported" as const, value: { ...facts } };
         },
         async resumeCapabilities(target, ctx) {
           if (target.sandbox) {
             try {
-              const info = await lifecycleSource(target.sandbox, ctx);
+              const { info } = await lifecycleSource(target.sandbox, ctx);
 
               if (!["stopped", "suspended"].includes(info.state))
                 return {
@@ -1530,7 +1587,8 @@ export function createDaytonaAdapter(
           recovery: { version: 1, token: SuspendToken },
           async prepare(input, ctx) {
             LifecycleInput.parse(input);
-            const info = await lifecycleSource(input.sandbox, ctx);
+            const source = await lifecycleSource(input.sandbox, ctx);
+            const { info } = source;
 
             if (info.state === "destroyed")
               throw new AdapterError("NOT_FOUND", "Sandbox is destroyed");
@@ -1541,17 +1599,28 @@ export function createDaytonaAdapter(
             if (!(info.state === "running"))
               throw new AdapterError("UNAVAILABLE", "Sandbox is transitioning or unavailable");
 
+            const facts = suspendable(source.facts);
+
             return ResolvedLifecycleInput.parse({
               ...input,
-              intent: { action: "suspend", preserve: "filesystem" },
+              intent: { action: "suspend", preserve: facts.preserve },
             });
           },
           async submit(input, ctx) {
             if (ctx.signal.aborted)
               return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
 
+            if (input.intent.action !== "suspend")
+              return ctx.reject("INVALID_ARGUMENT", "Resolved suspension intent missing");
+            const facts = factsFor(input.intent.preserve);
+
             try {
-              const response = await resourceState.transition(input.sandbox.id, "stop", ctx.signal);
+              // A Linux VM pause keeps memory; a stop would discard it.
+              const response = await resourceState.transition(
+                input.sandbox.id,
+                facts.preserve === "filesystem+memory" ? "pause" : "stop",
+                ctx.signal,
+              );
 
               if ([400, 401, 403, 404, 422, 429].includes(response.status))
                 return ctx.reject(
@@ -1583,12 +1652,7 @@ export function createDaytonaAdapter(
             }
 
             try {
-              await ctx.checkpoint({
-                acknowledged: true,
-                preserve: "filesystem",
-                processes: "terminated",
-                connections: "dropped",
-              });
+              await ctx.checkpoint({ acknowledged: true, ...facts });
             } catch {
               /* ACK remains known. */
             }
@@ -1600,22 +1664,16 @@ export function createDaytonaAdapter(
               deadline: Date.now() + 30000,
             }).catch(() => null);
 
-            if (observation && ["stopped", "suspended"].includes(observation.state)) {
-              const completed = {
-                reference: input.sandbox.reference,
-                preserve: "filesystem" as const,
-                processes: "terminated" as const,
-                connections: "dropped" as const,
-                observation,
-              };
+            const acknowledged = true;
+
+            if (observation && suspendedAs(observation, facts)) {
+              const completed = { reference: input.sandbox.reference, ...facts, observation };
 
               try {
                 await ctx.checkpoint(
                   z.json().parse({
                     acknowledged: true,
-                    preserve: "filesystem",
-                    processes: "terminated",
-                    connections: "dropped",
+                    ...facts,
                     completed: compactCompletion(completed),
                   }),
                 );
@@ -1626,23 +1684,19 @@ export function createDaytonaAdapter(
               return completed;
             }
 
-            const acknowledged = true;
-
             if (!observation)
               return ctx.unknown(
                 "Lifecycle acknowledged; target observation unavailable",
-                suspendOutcome(box.reference!, acknowledged, observation),
+                suspendOutcome(box.reference!, acknowledged, observation, facts),
               );
 
-            return ctx.pending(
-              {
-                acknowledged: true,
-                preserve: "filesystem",
-                processes: "terminated",
-                connections: "dropped",
-              },
-              { pollAfterMs: 100 },
-            );
+            if (lostMemory(observation, facts))
+              return ctx.unknown(
+                "Daytona VM stopped instead of pausing; memory preservation is unconfirmed",
+                suspendOutcome(box.reference!, acknowledged, observation, facts),
+              );
+
+            return ctx.pending({ acknowledged: true, ...facts }, { pollAfterMs: 100 });
           },
           async observe(attempt, ctx) {
             if (!attempt.sandbox?.reference || attempt.lifecycle?.action !== "suspend")
@@ -1665,47 +1719,46 @@ export function createDaytonaAdapter(
 
             const acknowledged = token.success;
 
-            if (!acknowledged || !observation)
+            if (!token.success || !observation)
               return ctx.unknown(
                 "Lifecycle outcome incomplete; observation cannot establish attribution",
-                suspendOutcome(box.reference!, acknowledged, observation),
+                suspendOutcome(
+                  box.reference!,
+                  acknowledged,
+                  observation,
+                  token.success ? factsFor(token.data.preserve) : undefined,
+                ),
               );
-            const input = { sandbox: { id: box.id, reference: box.reference! } };
+            const facts = factsFor(token.data.preserve);
 
-            if (["stopped", "suspended"].includes(observation.state))
+            if (lostMemory(observation, facts))
+              return ctx.unknown(
+                "Daytona VM stopped instead of pausing; memory preservation is unconfirmed",
+                suspendOutcome(box.reference!, acknowledged, observation, facts),
+              );
+
+            if (suspendedAs(observation, facts))
               return ctx.pending(
                 z.json().parse({
                   acknowledged: true,
-                  preserve: "filesystem",
-                  processes: "terminated",
-                  connections: "dropped",
+                  ...facts,
                   completed: compactCompletion({
-                    reference: input.sandbox.reference,
-                    preserve: "filesystem" as const,
-                    processes: "terminated" as const,
-                    connections: "dropped" as const,
+                    reference: box.reference!,
+                    ...facts,
                     observation,
                   }),
                 }),
                 { pollAfterMs: 1 },
               );
 
-            return ctx.pending(
-              {
-                acknowledged: true,
-                preserve: "filesystem",
-                processes: "terminated",
-                connections: "dropped",
-              },
-              { pollAfterMs: 100 },
-            );
+            return ctx.pending({ acknowledged: true, ...facts }, { pollAfterMs: 100 });
           },
         },
         resume: {
           recovery: { version: 1, token: ResumeToken },
           async prepare(input, ctx) {
             LifecycleInput.parse(input);
-            const info = await lifecycleSource(input.sandbox, ctx);
+            const { info } = await lifecycleSource(input.sandbox, ctx);
 
             if (info.state === "destroyed")
               throw new AdapterError("NOT_FOUND", "Sandbox is destroyed");
@@ -1721,6 +1774,26 @@ export function createDaytonaAdapter(
           async submit(input, ctx) {
             if (ctx.signal.aborted)
               return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
+            let execution: "fresh" | "resumed";
+
+            try {
+              const before = await resourceState.box(
+                input.sandbox.id,
+                { signal: ctx.signal, deadline: Date.now() + 30000 },
+                input.sandbox.reference,
+              );
+
+              // Only a paused Linux VM kept memory; stopped or archived compute starts fresh.
+              execution =
+                before.sandboxClass === "linux-vm" && before.state === "paused"
+                  ? "resumed"
+                  : "fresh";
+            } catch {
+              return ctx.reject(
+                "UNAVAILABLE",
+                "Native lifecycle state unavailable before dispatch",
+              );
+            }
 
             try {
               const response = await resourceState.transition(
@@ -1762,7 +1835,7 @@ export function createDaytonaAdapter(
             }
 
             try {
-              await ctx.checkpoint({ acknowledged: true });
+              await ctx.checkpoint({ acknowledged: true, execution });
             } catch {
               /* ACK remains known. */
             }
@@ -1777,7 +1850,7 @@ export function createDaytonaAdapter(
             if (observation && observation.state === "running") {
               const completed = {
                 reference: input.sandbox.reference,
-                execution: "fresh" as const,
+                execution,
                 executionIdentity: unknownSandboxFacts().execution,
                 connections: "dropped" as const,
                 observation,
@@ -1785,7 +1858,11 @@ export function createDaytonaAdapter(
 
               try {
                 await ctx.checkpoint(
-                  z.json().parse({ acknowledged: true, completed: compactCompletion(completed) }),
+                  z.json().parse({
+                    acknowledged: true,
+                    execution,
+                    completed: compactCompletion(completed),
+                  }),
                 );
               } catch {
                 /* Completion remains known. */
@@ -1805,7 +1882,7 @@ export function createDaytonaAdapter(
                 observation,
               });
 
-            return ctx.pending({ acknowledged: true }, { pollAfterMs: 100 });
+            return ctx.pending({ acknowledged: true, execution }, { pollAfterMs: 100 });
           },
           async observe(attempt, ctx) {
             if (!attempt.sandbox?.reference || attempt.lifecycle?.action !== "resume")
@@ -1840,14 +1917,16 @@ export function createDaytonaAdapter(
                 },
               );
             const input = { sandbox: { id: box.id, reference: box.reference! } };
+            const execution = token.data!.execution ?? "fresh";
 
             if (observation.state === "running")
               return ctx.pending(
                 z.json().parse({
                   acknowledged: true,
+                  execution,
                   completed: compactCompletion({
                     reference: input.sandbox.reference,
-                    execution: "fresh" as const,
+                    execution,
                     executionIdentity: unknownSandboxFacts().execution,
                     connections: "dropped" as const,
                     observation,
@@ -1856,7 +1935,7 @@ export function createDaytonaAdapter(
                 { pollAfterMs: 1 },
               );
 
-            return ctx.pending({ acknowledged: true }, { pollAfterMs: 100 });
+            return ctx.pending({ acknowledged: true, execution }, { pollAfterMs: 100 });
           },
         },
         async renewCapabilities(target, ctx) {
