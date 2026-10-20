@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -178,6 +179,8 @@ describe("tar", () => {
 
     expect((await stat(join(dest, "ro", "tool"))).mode & 0o7777).toBe(0o755);
     expect((await stat(join(dest, "ro"))).mode & 0o777).toBe(0o555);
+    // Without write access a non-root user could not remove the test folder afterwards.
+    await chmod(join(dest, "ro"), 0o755);
   });
 });
 
