@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Json } from "@sandbar-sdk/adapter";
@@ -1012,6 +1012,207 @@ describe("sandbar CLI against the fake provider", () => {
       expect(error).toMatchObject({ code: "INTERRUPTED", known: { sandbox: "job" } });
       expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
       expect(await storeNames()).toEqual([]);
+    });
+  });
+
+  describe("adapter", () => {
+    const adapters = () => join(dir, ".config", "sandbar", "adapters");
+
+    const version = async (): Promise<string> =>
+      JSON.parse(await readFile(join(import.meta.dir, "..", "package.json"), "utf8")).version;
+
+    /** Put the stand-in npm (and bun, which runs it) on an otherwise empty PATH. */
+    async function fakeNpm(extra: Record<string, string> = {}) {
+      const bin = join(dir, "bin");
+      await mkdir(bin, { recursive: true });
+      await symlink(process.execPath, join(bin, "bun"));
+      await symlink(join(import.meta.dir, "fake-npm.ts"), join(bin, "npm"));
+
+      return { PATH: bin, FAKE_NPM_LOG: join(dir, "npm.log"), ...extra };
+    }
+
+    async function npmCalls(): Promise<{ args: string[]; cwd: string }[]> {
+      try {
+        const log = await readFile(join(dir, "npm.log"), "utf8");
+
+        return log
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+      } catch {
+        return [];
+      }
+    }
+
+    test("add installs an official adapter at the CLI's version and reruns without npm", async () => {
+      const env = await fakeNpm();
+      const cliVersion = await version();
+
+      const added = await cli(["adapter", "add", "e2b", "--json"], env);
+
+      expect(added.code).toBe(0);
+      expect(envelope(added).data).toMatchObject({
+        dir: adapters(),
+        adapters: [
+          {
+            package: "@sandbar-sdk/e2b",
+            provider: "e2b",
+            version: cliVersion,
+            previous: null,
+            result: "installed",
+          },
+        ],
+      });
+      expect(envelope(added).data.adapters[0].exports).toContain("e2bAdapter");
+      expect(added.stderr).toContain("changed 1 packages");
+      expect(await npmCalls()).toEqual([
+        {
+          args: [
+            "install",
+            "--prefix",
+            adapters(),
+            "--no-audit",
+            "--no-fund",
+            "--save-exact",
+            `@sandbar-sdk/e2b@${cliVersion}`,
+          ],
+          cwd: adapters(),
+        },
+      ]);
+      expect(JSON.parse(await readFile(join(adapters(), "package.json"), "utf8"))).toMatchObject({
+        private: true,
+        dependencies: { "@sandbar-sdk/e2b": cliVersion },
+      });
+
+      const again = await cli(["adapter", "add", "e2b"], env);
+
+      expect(again).toMatchObject({
+        code: 0,
+        stdout: `unchanged @sandbar-sdk/e2b@${cliVersion} (e2b)\n`,
+      });
+      expect(await npmCalls()).toHaveLength(1);
+    });
+
+    test("an added third-party adapter loads from a profile", async () => {
+      const env = await fakeNpm();
+      await writeConfig({
+        default: "acme",
+        profiles: { acme: { module: "@acme/sandbar-fake", export: "fake" } },
+      });
+
+      expect((await cli(["doctor", "--json"], env)).code).toBe(4);
+
+      const added = await cli(["adapter", "add", "@acme/sandbar-fake@1.2.0"], env);
+
+      expect(added.code).toBe(0);
+      expect(added.stdout).toMatch(/^installed @acme\/sandbar-fake@1\.2\.0 exports .*\bfake\b/);
+      expect((await npmCalls())[0]!.args.at(-1)).toBe("@acme/sandbar-fake@1.2.0");
+      expect((await cli(["doctor", "--json"], env)).code).toBe(0);
+    });
+
+    test("an unknown bare name is refused before npm runs; npm: names it explicitly", async () => {
+      const env = await fakeNpm();
+      const refused = await cli(["adapter", "add", "e2bb", "--json"], env);
+
+      expect(refused.code).toBe(2);
+      expect(envelope(refused).error).toMatchObject({
+        code: "USAGE",
+        message: "Unknown provider e2bb",
+      });
+      expect(envelope(refused).error.hint).toContain("npm:e2bb");
+      expect(await npmCalls()).toEqual([]);
+
+      expect((await cli(["adapter", "add", "npm:acme-sandbar"], env)).code).toBe(0);
+      expect((await npmCalls())[0]!.args.at(-1)).toBe("acme-sandbar");
+    });
+
+    test("a package without an adapter export fails verification", async () => {
+      const result = await cli(
+        ["adapter", "add", "@acme/not-an-adapter", "--json"],
+        await fakeNpm(),
+      );
+
+      expect(result.code).toBe(4);
+      expect(envelope(result).error).toMatchObject({
+        code: "ADAPTER_LOAD_FAILED",
+        message: "@acme/not-an-adapter exports no Sandbar adapter",
+      });
+    });
+
+    test("npm failures and a missing npm are reported with their own codes", async () => {
+      const failed = await cli(
+        ["adapter", "add", "e2b", "--json"],
+        await fakeNpm({ FAKE_NPM_FAIL: "1" }),
+      );
+
+      expect(failed.code).toBe(1);
+      expect(envelope(failed).error.code).toBe("ADAPTER_INSTALL_FAILED");
+      expect(envelope(failed).error.message).toContain("404 Not Found");
+      expect(failed.stderr).toContain("npm error code E404");
+
+      const bin = join(dir, "bun-only");
+      await mkdir(bin);
+      await symlink(process.execPath, join(bin, "bun"));
+
+      const missing = await cli(["adapter", "add", "e2b", "--json"], { PATH: bin });
+
+      expect(missing.code).toBe(4);
+      expect(envelope(missing).error.code).toBe("ADAPTER_INSTALLER_MISSING");
+    });
+
+    test("ls reports versions that differ from the CLI, and rm is idempotent", async () => {
+      const env = await fakeNpm();
+
+      expect((await cli(["adapter", "ls"], env)).stdout).toContain("no adapters in");
+
+      const old = await cli(["adapter", "add", "daytona@0.0.1"], env);
+
+      expect(old.code).toBe(0);
+      expect(old.stderr).toContain("differs from this CLI");
+      await cli(["adapter", "add", "@acme/sandbar-fake"], env);
+
+      const listed = await cli(["adapter", "ls", "--json"], env);
+
+      expect(envelope(listed).data.adapters).toEqual([
+        {
+          package: "@acme/sandbar-fake",
+          provider: null,
+          requested: "9.9.9",
+          version: "9.9.9",
+          status: "ok",
+        },
+        {
+          package: "@sandbar-sdk/daytona",
+          provider: "daytona",
+          requested: "0.0.1",
+          version: "0.0.1",
+          status: "version-mismatch",
+        },
+      ]);
+
+      expect((await cli(["adapter", "rm", "daytona@0.0.1"], env)).code).toBe(2);
+
+      const removed = await cli(["adapter", "rm", "daytona", "e2b", "--json"], env);
+
+      expect(envelope(removed).data.adapters).toEqual([
+        { package: "@sandbar-sdk/daytona", provider: "daytona", result: "removed" },
+        { package: "@sandbar-sdk/e2b", provider: "e2b", result: "absent" },
+      ]);
+      expect((await npmCalls()).at(-1)!.args).toEqual([
+        "uninstall",
+        "--prefix",
+        adapters(),
+        "--no-audit",
+        "--no-fund",
+        "@sandbar-sdk/daytona",
+      ]);
+
+      const calls = (await npmCalls()).length;
+
+      expect((await cli(["adapter", "rm", "daytona"], env)).stdout).toBe(
+        "absent  @sandbar-sdk/daytona\n",
+      );
+      expect(await npmCalls()).toHaveLength(calls);
     });
   });
 

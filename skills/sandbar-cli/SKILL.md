@@ -16,7 +16,7 @@ sandbar providers --json   # which adapters are installed and which credentials 
 
 - If `sandbar` is not on PATH, stop and tell the user; do not install anything yourself.
 - The provider comes from `--profile`, `SANDBAR_PROFILE`, `--provider`, `SANDBAR_PROVIDER`, then `default` in `~/.config/sandbar/sandbar.json`. Do not edit that file or credentials unless the user asks.
-- A missing adapter (exit 4, `ADAPTER_NOT_INSTALLED`), an installed adapter that fails to load (exit 4, `ADAPTER_LOAD_FAILED`) or a missing credential (exit 2) is the user's to fix. Report the `hint` from the error.
+- A missing adapter (exit 4, `ADAPTER_NOT_INSTALLED`; the user installs it with `sandbar adapter add <provider>`), an installed adapter that fails to load (exit 4, `ADAPTER_LOAD_FAILED`) or a missing credential (exit 2) is the user's to fix. Report the `hint` from the error.
 
 **Sandboxes cost money.** Create only what the task needs and destroy it when done.
 
