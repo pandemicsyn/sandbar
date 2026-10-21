@@ -282,3 +282,5 @@ Import from `@sandbar-sdk/adapter/testing`.
 | `AdapterSuiteFixture` | type     |
 | `AdapterSuiteReport`  | type     |
 | `filesystemSuite`     | function |
+| `snapshotSuite`       | function |
+| `SnapshotSuiteClient` | type     |

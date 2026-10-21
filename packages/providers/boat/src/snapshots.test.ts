@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { OutcomeUnknownError, Preserve, Sandbar } from "sandbar-sdk";
+import { snapshotSuite } from "@sandbar-sdk/adapter/testing";
 import { createBoatAdapter } from "./adapter";
 import { boatFixture } from "./fixture.test-support";
 
@@ -259,6 +260,26 @@ test("Boat accepts filesystem-only preserve and rejects memory at connect before
     const source = await client.sandboxes.create();
     const captured = await source.snapshot({ requirements: { preserve: Preserve.FILESYSTEM } });
     expect(captured.capture.preserve).toBe("filesystem");
+  } finally {
+    await client.close();
+  }
+});
+
+test("Boat passes the shared snapshot suite", async () => {
+  const { fixture } = setup();
+
+  const client = await Sandbar.connect({
+    adapter: createBoatAdapter({ fetch: fixture.fetch, pollIntervalMs: 1, settleSeconds: 1 }),
+    config: { ...config, snapshots: { preserve: Preserve.FILESYSTEM } },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    await snapshotSuite({
+      client,
+      path: "/home/user/sandbar-suite.bin",
+      preserve: Preserve.FILESYSTEM,
+    });
   } finally {
     await client.close();
   }

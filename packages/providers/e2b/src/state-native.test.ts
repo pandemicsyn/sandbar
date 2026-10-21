@@ -17,6 +17,7 @@ import {
   WaitAbortedError,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
+import { snapshotSuite } from "@sandbar-sdk/adapter/testing";
 import { createE2BAdapter } from "./index";
 import {
   E2BVolumeCreateRejected,
@@ -406,6 +407,23 @@ test("E2B filesystem-only capture sends memory: false and its history outlives t
     await reopened.close();
   }
 });
+
+for (const preserve of [Preserve.FILESYSTEM_AND_MEMORY, Preserve.FILESYSTEM])
+  test(`E2B passes the shared snapshot suite: ${preserve}`, async () => {
+    const f = fixture();
+    const client = await f.connect("fixture-key", undefined, undefined, "protected", { preserve });
+
+    try {
+      await snapshotSuite({
+        client,
+        createInput: { environment: Image.prepared("base") },
+        preserve,
+      });
+      expect(f.captureMemory).toEqual([preserve === Preserve.FILESYSTEM_AND_MEMORY]);
+    } finally {
+      await client.close();
+    }
+  });
 
 test("E2B filesystem-only capture posts memory: false directly", async () => {
   const requests: { url: string; body: unknown }[] = [];

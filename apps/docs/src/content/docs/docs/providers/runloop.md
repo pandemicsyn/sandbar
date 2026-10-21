@@ -38,6 +38,7 @@ Create an API key in the Runloop dashboard. `connect` verifies it with `GET /v1/
 | `lifecycle.lifetimeSeconds` | 900               | 60 seconds to 48 hours. Runloop shuts the Devbox down when the time is up. `create({ lifecycle })` can override it per sandbox unless `idleSeconds` is set.                                                                                |
 | `lifecycle.idleSeconds`     | none              | Suspend after this many idle seconds instead of using a fixed lifetime. Set either this or `lifetimeSeconds`, not both.                                                                                                                    |
 | `preview.access`            | `protected`       | `protected` previews need the returned `X-Runloop-Tunnel-Authorization` header. `public` URLs are open to anyone who has them.                                                                                                             |
+| `snapshots.preserve`        | `filesystem`      | Runloop snapshots keep the disk only; `Preserve.FILESYSTEM_AND_MEMORY` rejects `UNSUPPORTED` at connect.                                                                                                                                   |
 
 Create-time `env` is sent as Runloop environment variables. `region`, `labels` and mounts are rejected.
 

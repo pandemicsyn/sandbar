@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { status } from "@grpc/grpc-js";
 import { OutcomeUnknownError, Preserve, Sandbar } from "sandbar-sdk";
+import { snapshotSuite } from "@sandbar-sdk/adapter/testing";
 import { createModalAdapter } from "./adapter";
 import { createRejection, type ModalTransport } from "./transport";
 
@@ -11,6 +12,7 @@ function fixture() {
   const images = new Set(["im-base"]);
   const creates: Parameters<ModalTransport["create"]>[0][] = [];
   const effects = { snapshot: 0, delete: 0 };
+  const ttls: (number | null | undefined)[] = [];
   let nextSnapshot: "lose" | "reject" | undefined;
   let loseDelete = false;
 
@@ -51,8 +53,9 @@ function fixture() {
     async result() {
       return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
     },
-    async snapshotFilesystem(sandboxId) {
+    async snapshotFilesystem(sandboxId, ttlMs) {
       effects.snapshot++;
+      ttls.push(ttlMs);
 
       if (nextSnapshot === "reject") {
         nextSnapshot = undefined;
@@ -104,6 +107,7 @@ function fixture() {
     images,
     creates,
     effects,
+    ttls,
     connect,
     loseNextSnapshot() {
       nextSnapshot = "lose";
@@ -274,4 +278,56 @@ test("Modal accepts filesystem-only preserve and rejects memory at connect befor
   } finally {
     await client.close();
   }
+});
+
+test("Modal passes the shared snapshot suite without listing", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: createModalAdapter(() => native.transport),
+    config: {
+      appName: "existing",
+      environment: "main",
+      image: "im-base",
+      snapshots: { preserve: Preserve.FILESYSTEM },
+    },
+    credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+  });
+
+  try {
+    // The fixture models no guest files; Modal has no snapshot listing API.
+    await snapshotSuite({ client, preserve: Preserve.FILESYSTEM, list: false });
+    expect(native.effects).toEqual({ snapshot: 1, delete: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Modal snapshot retention sets the native TTL from capture", async () => {
+  const native = fixture();
+
+  for (const retentionSeconds of [undefined, 3600, 0]) {
+    const client = await Sandbar.connect({
+      adapter: createModalAdapter(() => native.transport),
+      config: {
+        appName: "existing",
+        environment: "main",
+        image: "im-base",
+        snapshots: retentionSeconds === undefined ? {} : { retentionSeconds },
+      },
+      credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+    });
+
+    try {
+      const source = await client.sandboxes.create();
+      const longer = await source.checkSnapshot({ retention: { minimumSeconds: 31 * 86_400 } });
+      // Only "never expires" can guarantee more than the native or configured lifetime.
+      expect(longer.status === "supported").toBe(retentionSeconds === 0);
+      await source.snapshot();
+    } finally {
+      await client.close();
+    }
+  }
+
+  expect(native.ttls).toEqual([undefined, 3_600_000, null]);
 });

@@ -7,6 +7,7 @@ import {
   type Scope,
   sandboxReference,
   unknownSandboxFacts,
+  Preserve,
 } from "@sandbar-sdk/adapter";
 import {
   Sandbar,
@@ -31,6 +32,7 @@ function fixture(
     largeScope?: boolean;
     verified?: boolean;
     sandboxClass?: string;
+    preserve?: Preserve;
   } = {},
 ) {
   let scope: Scope = {
@@ -182,11 +184,13 @@ function fixture(
 
       if (url.pathname === "/sandbox/source/snapshot" && method === "POST") {
         calls.capture++;
-        expect(state).toBe("stopped");
 
         const input = z
-          .object({ name: z.string(), includeMemory: z.literal(false) })
+          .object({ name: z.string(), includeMemory: z.boolean() })
           .parse(JSON.parse(String(init?.body)));
+
+        // Cold capture needs a stopped source; hot capture needs a running Linux VM.
+        expect(state).toBe(input.includeMemory ? "started" : "stopped");
 
         if (modes.captureRejected) return new Response(null, { status: 422 });
         snapshot = {
@@ -314,6 +318,7 @@ function fixture(
       apiKey,
       target: "us",
       restartAfterCapture: options.restartAfterCapture,
+      preserve: options.preserve,
       fetch: fetcher,
     });
 
@@ -457,6 +462,110 @@ for (const variant of ["default", "stopped"] as const) {
     }
   });
 }
+
+test("Daytona hot capture keeps a running Linux VM's memory without stopping it", async () => {
+  const f = fixture({ sandboxClass: "linux-vm", preserve: Preserve.FILESYSTEM_AND_MEMORY });
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const check = await source.checkSnapshot();
+    expect(check.status === "supported" && check.value.profile).toMatchObject({
+      id: "daytona-linux-vm-hot",
+      preserve: "filesystem+memory",
+      sourceAfter: "unchanged",
+      restoreExecution: "resume",
+    });
+
+    const result = await source.snapshot();
+    expect(result.capture).toEqual({
+      preserve: "filesystem+memory",
+      interruption: "pause",
+      restoreExecution: "resume",
+    });
+    expect(result.source).toMatchObject({ state: "running", connections: "unknown" });
+    expect(f.calls).toMatchObject({ stop: 0, capture: 1, start: 0 });
+    expect(f.state()).toBe("started");
+    expect(await result.snapshot.inspect()).toMatchObject({
+      preserve: "filesystem+memory",
+      restoreExecution: "resume",
+      mountHandling: "none",
+      source: { id: "source", class: "linux-vm" },
+    });
+
+    // Resumed processes keep their captured environment, so restore-time env rejects first.
+    await expect(result.snapshot.restore({ env: { TOKEN: "x" } })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+    });
+
+    const fresh = await f.connect(undefined, "rotated-key");
+
+    try {
+      const opened = await fresh.snapshots.get(structuredClone(result.snapshot.reference));
+      expect(await opened.inspect()).toMatchObject({
+        preserve: "filesystem+memory",
+        restoreExecution: "resume",
+      });
+    } finally {
+      await fresh.close();
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona hot capture rejects containers and stopped VMs before effects", async () => {
+  // A container can never take a hot capture; a stopped VM can once it is running again.
+  for (const [sandboxClass, stopped, status, code] of [
+    ["container", false, "unsupported", "UNSUPPORTED"],
+    ["linux-vm", true, "unavailable", "UNAVAILABLE"],
+  ] as const) {
+    const f = fixture({ sandboxClass, stopped, preserve: Preserve.FILESYSTEM_AND_MEMORY });
+    const client = await f.connect();
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+      expect((await source.checkSnapshot()).status).toBe(status);
+      await expect(source.snapshot()).rejects.toMatchObject({ code, effect: "none" });
+      expect(f.calls).toMatchObject({ stop: 0, capture: 0, start: 0 });
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test("Daytona explicit filesystem preserve keeps cold Linux VM capture", async () => {
+  const f = fixture({ sandboxClass: "linux-vm", preserve: Preserve.FILESYSTEM });
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const result = await source.snapshot();
+    expect(result.capture.preserve).toBe("filesystem");
+    expect(f.calls).toMatchObject({ stop: 1, capture: 1, start: 1 });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona lost hot capture acknowledgement stays read-only on recovery", async () => {
+  const f = fixture({ sandboxClass: "linux-vm", preserve: Preserve.FILESYSTEM_AND_MEMORY });
+  f.modes.captureLost = true;
+  const client = await f.connect();
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+    const operation = await source.submitSnapshot();
+    await expect(operation.wait()).rejects.toBeInstanceOf(OutcomeUnknownError);
+    await expect(
+      (await client.recover(structuredClone(operation.reference))).wait(),
+    ).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(f.calls).toMatchObject({ stop: 0, capture: 1, start: 0 });
+  } finally {
+    await client.close();
+  }
+});
 
 test("Daytona capture rejects unmapped sandbox classes before effects", async () => {
   const f = fixture({ sandboxClass: "windows" });

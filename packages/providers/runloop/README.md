@@ -39,7 +39,7 @@ Scope is the account id from `GET /v1/accounts/me` plus the fixed `https://api.r
 - **Streaming processes** run through `execute` with no deadline and follow Runloop's server-sent log streams (`stream_stdout_updates`, `stream_stderr_updates`), reopening from byte offsets; exit comes from `wait_for_status`. Output is UTF-8 text only, so `format: "bytes"` and callback exec are unsupported. `terminate()` kills the execution. Piped stdin, terminals, signals and reopen are unsupported. Offset semantics and stream closing at exit are taken from Runloop's API reference and are untested against the live service.
 - **Files** read and overwrite up to 64 MiB. No-clobber writes are unsupported.
 - **Suspend/resume** keeps the disk only; resume starts fresh processes.
-- **Snapshots** capture the disk asynchronously while the Devbox keeps running; restore creates a new Devbox. List, inspect and delete are supported.
+- **Snapshots** capture the disk asynchronously while the Devbox keeps running; restore creates a new Devbox. List, inspect and delete are supported. Setup accepts `snapshots: { preserve: Preserve.FILESYSTEM }` (the default); `Preserve.FILESYSTEM_AND_MEMORY` rejects `UNSUPPORTED` at connect.
 - **Preview** returns the tunnel URL for a port.
 - **Destroy** shuts the Devbox down and confirms the `shutdown` status. Snapshots survive.
 - Unsupported: OCI images and image builds, volumes, mounts, egress allowlists, renewal, interactive processes, directory operations, regions and labels.

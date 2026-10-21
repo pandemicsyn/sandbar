@@ -13,7 +13,7 @@ For TypeScript annotations, import `SandbarClient`, `SandboxHandle`, `SnapshotHa
 
 ## Capture and restore
 
-Start with a connection named `sandbar`, configured with a default environment and network policy as shown in [Getting started](/docs/direct-quickstart/). The adapter must support snapshot capture and restore. E2B and Daytona support different kinds of captured state, described [below](#what-capture-preserves).
+Start with a connection named `sandbar`, configured with a default environment and network policy as shown in [Getting started](/docs/direct-quickstart/). The adapter must support snapshot capture and restore. Providers keep different kinds of state, described [below](#what-capture-preserves).
 
 ```ts
 const source = await sandbar.sandboxes.create();
@@ -72,15 +72,18 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 
 `source.snapshot()` uses the adapter's configured capture behavior. Optional requirements check that behavior; they do not switch capture modes.
 
-| Provider          | Captured state                            | Effect on a running source                | Restored execution                               |
-| ----------------- | ----------------------------------------- | ----------------------------------------- | ------------------------------------------------ |
-| Daytona container | Private filesystem                        | Stop, capture, then restart               | Fresh processes; RAM is not retained             |
-| E2B               | Private filesystem, RAM and process state | Pause and resume; active connections drop | Resume captured processes in independent compute |
-| Modal             | Private root filesystem                   | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
-| boxd              | Private disk, RAM and process state       | Brief pause; keeps running                | Resume captured processes in a new machine       |
-| Boat              | Private disk                              | Keeps running; any pause is undocumented  | Fresh processes; RAM is not retained             |
+| Provider                                           | Captured state                            | Effect on a running source                | Restored execution                               |
+| -------------------------------------------------- | ----------------------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| Daytona                                            | Private filesystem                        | Stop, capture, then restart               | Fresh processes; RAM is not retained             |
+| Daytona Linux VM, `Preserve.FILESYSTEM_AND_MEMORY` | Private filesystem, RAM and process state | May pause briefly; keeps running          | Resume captured processes in a new VM            |
+| E2B                                                | Private filesystem, RAM and process state | Pause and resume; active connections drop | Resume captured processes in independent compute |
+| Modal                                              | Private root filesystem                   | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
+| boxd                                               | Private disk, RAM and process state       | Brief pause; keeps running                | Resume captured processes in a new machine       |
+| Vercel (disposable mode)                           | Private filesystem                        | Source session stops                      | Fresh processes; RAM is not retained             |
+| Runloop                                            | Private disk                              | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
+| Boat                                               | Private disk                              | Keeps running; any pause is undocumented  | Fresh processes; RAM is not retained             |
 
-Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
+Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer. Modal has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
 
 ```ts
 const captured = await source.snapshot({
@@ -88,7 +91,7 @@ const captured = await source.snapshot({
 }); // E2B can satisfy this; Daytona rejects before stopping compute.
 ```
 
-Where a provider offers both, choose what capture keeps once, in adapter setup, with the exported `Preserve` constants. The choice is exact: E2B's `Preserve.FILESYSTEM` skips memory, and restored sandboxes boot fresh. boxd always keeps memory, so it rejects `Preserve.FILESYSTEM` at connect; Modal and Boat keep files only, so they reject `Preserve.FILESYSTEM_AND_MEMORY`. Omit it to keep the provider's default. A choice the adapter cannot honor rejects before any sandbox changes.
+Choose what capture keeps once, in adapter setup, with `snapshots: { preserve }` and the exported `Preserve` constants. Every adapter with snapshots accepts it, so the setting carries over when you switch providers. The choice is exact: E2B's `Preserve.FILESYSTEM` skips memory, and restored sandboxes boot fresh. Daytona's `Preserve.FILESYSTEM_AND_MEMORY` captures memory from running Linux VMs; containers reject it before any change. boxd always keeps memory, so it rejects `Preserve.FILESYSTEM` at connect; Modal, Vercel, Runloop and Boat keep files only, so they reject `Preserve.FILESYSTEM_AND_MEMORY` at connect. Omit it to keep the provider's default. A choice the adapter cannot honor rejects before any sandbox changes.
 
 ```ts
 import { Preserve } from "sandbar-sdk";
@@ -100,6 +103,13 @@ const adapter = e2b({
   lifecycle: { suspension: { preserve: Preserve.FILESYSTEM } },
 });
 ```
+
+Snapshots cost storage until they are deleted or expire. Where the provider supports expiry, set it once in adapter setup with `snapshots: { retentionSeconds }`, using `0` for never:
+
+- **Vercel** counts from the snapshot's last use. The default is 30 days, and it applies in disposable mode only.
+- **Modal** counts from capture. The default is 30 days.
+
+Other adapters reject the setting at connect. Their providers keep snapshots until you delete them, except Daytona, which deactivates snapshots after two weeks without use. `snapshot({ retention: { minimumSeconds } })` checks against the configured expiry before capture.
 
 Pause application writers before capture if you need consistent data. Passing `consistency: "caller-quiesced"` records that you did so; Sandbar does not pause writers for you. Otherwise, consistency remains unknown unless the provider supplies evidence. `captured.capture` describes what was saved, and `captured.source` describes the source after capture.
 
@@ -184,17 +194,17 @@ The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/
 
 ### Current combinations
 
-| Workflow                               | Current support                                                                                                                                                                                                   |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Capture and restore private state      | Daytona, Vercel (disposable mode), Runloop, Modal and Boat filesystem capture; E2B and boxd filesystem and memory capture.                                                                                        |
-| Capture a sandbox with external mounts | Unsupported by the Daytona, E2B and boxd adapters.                                                                                                                                                                |
-| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.                                                                                               |
-| Restore with `env`, `labels`, lifetime | All three on Daytona, Modal and Vercel (lifetime only in disposable mode); E2B (env only for filesystem snapshots); Runloop env and lifetime (lifetime unless `idleSeconds` is set); Boat and boxd lifetime only. |
-| Override restore resource sizes        | Unsupported by Daytona, E2B, boxd, Modal and Boat; empty overrides are treated as omitted.                                                                                                                        |
-| Create a sandbox with volumes          | Daytona writable mounts with optional subpaths; boxd whole-disk read-only or writable mounts.                                                                                                                     |
-| Manage E2B volumes                     | Private-beta API mapping; live creation was blocked by account HTTP 403. Sandbar create-time mounts are unsupported.                                                                                              |
-| Manage Vercel volumes                  | Unsupported.                                                                                                                                                                                                      |
-| Copy or version a volume               | Unsupported by Daytona, E2B and boxd.                                                                                                                                                                             |
+| Workflow                               | Current support                                                                                                                                                                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capture and restore private state      | Daytona, Vercel (disposable mode), Runloop, Modal and Boat filesystem capture; E2B and boxd filesystem and memory capture.                                                                                                              |
+| Capture a sandbox with external mounts | Unsupported by every adapter.                                                                                                                                                                                                           |
+| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.                                                                                                                     |
+| Restore with `env`, `labels`, lifetime | All three on Daytona, E2B, Modal and Vercel (Vercel lifetime only in disposable mode; Daytona and E2B env only for filesystem snapshots); Runloop env and lifetime (lifetime unless `idleSeconds` is set); Boat and boxd lifetime only. |
+| Override restore resource sizes        | Unsupported by Daytona, E2B, boxd, Modal and Boat; empty overrides are treated as omitted.                                                                                                                                              |
+| Create a sandbox with volumes          | Daytona writable mounts with optional subpaths; boxd whole-disk read-only or writable mounts.                                                                                                                                           |
+| Manage E2B volumes                     | Private-beta API mapping; live creation was blocked by account HTTP 403. Sandbar create-time mounts are unsupported.                                                                                                                    |
+| Manage Vercel volumes                  | Unsupported.                                                                                                                                                                                                                            |
+| Copy or version a volume               | Unsupported by Daytona, E2B and boxd.                                                                                                                                                                                                   |
 
 boxd volumes and mounts have deterministic test coverage but no recorded live storage pass. Vercel has no recorded live acceptance. See [tested provider support](/docs/providers/support/) for evidence per workflow.
 

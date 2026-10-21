@@ -93,6 +93,8 @@ Daytona create accepts the immutable snapshot ID but reports the snapshot name o
 Volume deletion can leave a native tombstone with state `deleted`, HTTP 200, and a changed name. After a durably checkpointed deletion dispatch barrier, recovery confirms absence or that terminal state only for the saved immutable ID and organization; it does not reuse the tombstone name or replay DELETE. This confirms the requested absent state, not which actor deleted it or whether billing ended. Legacy tokens lacking dispatch evidence, failed reads and foreign/replacement identities remain unknown. Inspection of a scoped deleted volume returns `NOT_FOUND`.
 
 
+Capture depth comes from setup `snapshots.preserve`. Omitted or `filesystem` keeps cold capture (`includeMemory: false`): stop, capture, then restart unless `restartAfterCapture` is `false`. `filesystem+memory` sends `includeMemory: true` to a running Linux VM without stop or restart; the profile reports a possible `pause`, unchanged source, unknown connections and `resume` execution, and the reference history records the depth so a fresh connection can restore it. Containers reject `UNSUPPORTED` and stopped VMs `UNAVAILABLE` before any effect; the class comes from the snapshot, so connect cannot check it. Restore accepts a hot snapshot only with this adapter's capture history and a Linux VM source. Fixture-tested only.
+
 Cancellation during the initial capture checkpoint persists a no-dispatch rejection; fresh explicit continuation confirms no effect without another native read or mutation. Volume creation checkpoints definitive HTTP 400/401/403/422 rejection before reporting no effect. Timeout, rate-limit, server and transport failures remain uncertain, with no replay or adoption by name.
 
 
