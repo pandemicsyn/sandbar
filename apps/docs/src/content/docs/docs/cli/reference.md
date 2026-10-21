@@ -45,7 +45,7 @@ With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false
 Create a sandbox and print its name.
 
 ```sh
-sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--ttl <duration>] [--env K=V]...
+sandbar create [--name <name>] [--image <oci-ref> | --prepared <id> | --snapshot <name>] [--network <policy>] [--ttl <duration>] [--env K=V]...
 ```
 
 | Flag                 | Description                                                                                                       |
@@ -59,6 +59,7 @@ sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network 
 | `--env-file <path>`  | Read K=V lines into the sandbox environment (repeatable; --env wins)                                              |
 | `--build`            | Build --image now if this provider needs a build and none is recorded                                             |
 | `--ttl <duration>`   | Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime |
+| `--snapshot <name>`  | Restore a snapshot recorded by `sandbar snapshot create` instead of an image                                      |
 | `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing                                                  |
 
 Examples:
@@ -219,6 +220,7 @@ sandbar run [create flags] [exec flags] [--keep] [--push <path>] -- <command> [a
 | `--env-file <path>`    | Read K=V lines into this command's environment (repeatable; --env wins)                                           |
 | `--build`              | Build --image now if this provider needs a build and none is recorded                                             |
 | `--ttl <duration>`     | Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime |
+| `--snapshot <name>`    | Restore a snapshot recorded by `sandbar snapshot create` instead of an image                                      |
 | `--cwd <dir>`          | Working directory in the sandbox                                                                                  |
 | `--stdin`              | Send this process's stdin to the command                                                                          |
 | `--stdin-file <path>`  | Send a local file as the command's stdin                                                                          |
@@ -264,6 +266,32 @@ sandbar image ls
 sandbar image ls --remote --provider e2b
 sandbar image rm python-3-12
 sandbar image forget python-3-12
+```
+
+## snapshot
+
+Capture a sandbox as a snapshot, and list, inspect, delete or forget snapshots.
+
+```sh
+sandbar snapshot create <sandbox> [--name <name> [--replace]] | ls [--remote] | inspect <name> | rm <name> [--force] | forget <name>
+```
+
+| Flag            | Description                                                                |
+| --------------- | -------------------------------------------------------------------------- |
+| `--name <name>` | Record name for a capture (default: <sandbox>-snap)                        |
+| `--replace`     | Capture --name again; the old snapshot is deleted once the new one exists  |
+| `--remote`      | List the snapshots on the provider for this profile, not the local records |
+| `--force`       | Delete a recorded snapshot this CLI did not verifiably capture             |
+
+Examples:
+
+```sh
+sandbar snapshot create web --name deps
+sandbar create --snapshot deps --name web-2
+sandbar run --snapshot deps -- npm test
+sandbar snapshot create web --name deps --replace
+sandbar snapshot ls
+sandbar snapshot rm deps
 ```
 
 ## cp

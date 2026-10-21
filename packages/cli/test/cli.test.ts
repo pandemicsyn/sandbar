@@ -2254,3 +2254,187 @@ describe("directory transfer", () => {
     expect(await fakeResources()).toEqual([]);
   });
 });
+
+describe("snapshots", () => {
+  beforeEach(async () => {
+    await writeConfig({
+      default: "snaps",
+      profiles: {
+        snaps: { module: fixture, export: "snapshotting" },
+        fake: { module: fixture, export: "fake" },
+      },
+    });
+    await writeFile(join(dir, "state.txt"), "warm cache\n");
+  });
+
+  async function snapshotNames() {
+    try {
+      return (await readdir(join(dir, "state", "snapshots"))).sort();
+    } catch {
+      return [];
+    }
+  }
+
+  async function warmSandbox() {
+    expect((await cli(["create", "--name", "web", "--prepared", "fake-starter"])).code).toBe(0);
+    expect((await cli(["cp", "state.txt", "web:/work/state.txt"])).code).toBe(0);
+  }
+
+  test("capture, restore with create and run, list, replace and delete", async () => {
+    await warmSandbox();
+
+    const captured = await cli(["snapshot", "create", "web", "--name", "deps", "--json"]);
+
+    expect(captured.code).toBe(0);
+    expect(envelope(captured).data).toMatchObject({
+      name: "deps",
+      sandbox: "web",
+      profile: "snaps",
+      status: "captured",
+      preserve: "filesystem",
+      replaced: null,
+      reference: { kind: "snapshot", ownership: "verified-created" },
+    });
+    const firstId = envelope(captured).data.id;
+
+    expect(await snapshotNames()).toEqual(["deps.json"]);
+
+    // The source keeps running; a restore is a new sandbox with the captured files.
+    const restored = await cli(["create", "--snapshot", "deps", "--name", "web-2", "--json"]);
+
+    expect(restored.code).toBe(0);
+    expect(envelope(restored).data).toMatchObject({ name: "web-2", image: "snapshot:deps" });
+    expect((await cli(["cat", "web-2:/work/state.txt"])).stdout).toBe("warm cache\n");
+
+    await seedExec(["true"], 0, "");
+    expect((await cli(["run", "--snapshot", "deps", "--", "true"])).code).toBe(0);
+
+    const inspected = envelope(await cli(["snapshot", "inspect", "deps", "--json"]));
+
+    expect(inspected.data).toMatchObject({ name: "deps", state: "ready", id: firstId });
+
+    const listed = envelope(await cli(["snapshot", "ls", "--json"]));
+
+    expect(listed.data.snapshots.map((row: { name: string }) => row.name)).toEqual(["deps"]);
+
+    // A snapshot in use by a running restore stays on the provider when it is replaced.
+    const busy = await cli(["snapshot", "create", "web", "--name", "deps", "--replace", "--json"]);
+
+    expect(envelope(busy).data.replaced).toEqual({ id: firstId, result: "kept" });
+    expect(busy.stderr).toContain(`the previous snapshot ${firstId} is still on snaps`);
+    expect((await cli(["rm", "web-2"])).code).toBe(0);
+    const busyId = envelope(busy).data.id;
+
+    const taken = await cli(["snapshot", "create", "web", "--name", "deps", "--json"]);
+
+    expect(taken.code).toBe(1);
+    expect(envelope(taken).error).toMatchObject({ code: "CONFLICT", outcome: "rejected" });
+
+    const replaced = await cli([
+      "snapshot",
+      "create",
+      "web",
+      "--name",
+      "deps",
+      "--replace",
+      "--json",
+    ]);
+
+    expect(replaced.code).toBe(0);
+    expect(envelope(replaced).data.replaced).toEqual({ id: busyId, result: "deleted" });
+
+    const remote = envelope(await cli(["snapshot", "ls", "--remote", "--json"]));
+
+    expect(remote.data.snapshots).toEqual([
+      expect.objectContaining({ id: firstId, record: null }),
+      expect.objectContaining({ id: envelope(replaced).data.id, record: "deps" }),
+    ]);
+
+    const removed = await cli(["snapshot", "rm", "deps", "--json"]);
+
+    expect(removed.code).toBe(0);
+    expect(envelope(removed).data).toMatchObject({ name: "deps", result: "deleted" });
+    expect(await snapshotNames()).toEqual([]);
+    expect(
+      envelope(await cli(["snapshot", "ls", "--remote", "--json"])).data.snapshots.map(
+        (row: { id: string }) => row.id,
+      ),
+    ).toEqual([firstId]);
+
+    const gone = await cli(["create", "--snapshot", "deps", "--json"]);
+
+    expect(envelope(gone).error.code).toBe("NOT_FOUND");
+  });
+
+  test("the default name comes from the sandbox, and forget keeps the provider's snapshot", async () => {
+    await warmSandbox();
+
+    expect((await cli(["snapshot", "create", "web"])).stdout).toBe("web-snap\n");
+    expect((await cli(["snapshot", "create", "web"])).stdout).toMatch(/^web-snap-[0-9a-f]{4}\n$/);
+
+    const forgotten = await cli(["snapshot", "forget", "web-snap"]);
+
+    expect(forgotten.code).toBe(0);
+    expect(forgotten.stdout).toContain("forget never deletes it");
+
+    const remote = envelope(await cli(["snapshot", "ls", "--remote", "--json"]));
+
+    expect(
+      remote.data.snapshots.map((row: { record: string | null }) => row.record).sort(),
+    ).toEqual([null, expect.stringMatching(/^web-snap-/)]);
+  });
+
+  test("a provider without snapshots rejects before any effect", async () => {
+    await writeConfig({ default: "fake", profiles: { fake: { module: fixture, export: "fake" } } });
+    await warmSandbox();
+
+    const result = await cli(["snapshot", "create", "web", "--json"]);
+
+    expect(result.code).toBe(4);
+    expect(envelope(result).error).toMatchObject({ code: "UNSUPPORTED", outcome: "rejected" });
+    expect(await snapshotNames()).toEqual([]);
+
+    const remote = await cli(["snapshot", "ls", "--remote", "--json"]);
+
+    expect(envelope(remote).error.code).toBe("UNSUPPORTED");
+  });
+
+  test("restore flags that cannot apply, and another profile, fail before any effect", async () => {
+    await warmSandbox();
+    await cli(["snapshot", "create", "web", "--name", "deps"]);
+
+    for (const extra of [
+      ["--image", "python:3.12"],
+      ["--prepared", "fake-starter"],
+      ["--ttl", "1h"],
+      ["--label", "a=b"],
+      ["--env", "A=1"],
+    ]) {
+      const result = await cli(["create", "--snapshot", "deps", ...extra, "--json"]);
+
+      expect(result.code).toBe(2);
+      expect(envelope(result).error.message).toContain(
+        `--snapshot cannot be combined with ${extra[0]}`,
+      );
+    }
+
+    const other = await cli(["create", "--snapshot", "deps", "--profile", "fake", "--json"]);
+
+    expect(other.code).toBe(2);
+    expect(envelope(other).error.message).toBe("Snapshot deps belongs to profile snaps, not fake");
+
+    // For run, --env belongs to the command, so it stays allowed.
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      command: {
+        command: { kind: "argv", argv: ["true"] },
+        env: { A: "1" },
+        exitCode: 0,
+        stdoutBase64: "",
+      },
+    });
+    expect((await cli(["run", "--snapshot", "deps", "--env", "A=1", "--", "true"])).code).toBe(0);
+    expect((await fakeResources()).filter((box) => box.state === "running")).toHaveLength(1);
+  });
+});

@@ -7,6 +7,8 @@ Use a **snapshot** to save sandbox state and restore it into another sandbox. Us
 
 Support varies by adapter. Capturing a snapshot, restoring it, managing volumes and mounting volumes are separate features. See [current combinations](#current-combinations) and [tested provider support](/docs/providers/support/) before choosing a workflow.
 
+From the command line, `sandbar snapshot create` and `sandbar create --snapshot` do the same; see [Snapshots in the CLI](/docs/cli/#snapshots).
+
 For TypeScript annotations, import `SandbarClient`, `SandboxHandle`, `SnapshotHandle` and `VolumeHandle` from `sandbar-sdk`. See the [TypeScript reference](/docs/reference/typescript/#consumer-vocabulary-and-compatibility) for compatibility types.
 
 ## Capture and restore

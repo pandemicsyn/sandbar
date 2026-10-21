@@ -31,12 +31,14 @@ import {
 import { imageEnvironment } from "./images";
 import { missingEnv, providers, resolveAdapterModule, type ResolvedProfile } from "./providers";
 import type { Session } from "./session";
+import { restoreSnapshot, snapshotSource } from "./snapshots";
 import {
   checkName,
   generatedName,
   listAll,
   RecordName,
   type SandboxRecord,
+  type SnapshotRecord,
   type StateStore,
   type Versioned,
 } from "./store";
@@ -73,6 +75,11 @@ export class Flags {
   bool(name: string): boolean {
     return z.boolean().optional().parse(this.values[name]) ?? false;
   }
+
+  /** Whether the flag was given at all. */
+  has(name: string): boolean {
+    return this.values[name] !== undefined;
+  }
 }
 
 type CreateRequest = {
@@ -88,14 +95,37 @@ type CreateRequest = {
   build: boolean;
   /** `--ttl`: this sandbox's lifetime in seconds, replacing the profile's. */
   lifetimeSeconds?: number;
+  /** `--snapshot`: restore this recorded snapshot instead of creating from an image. */
+  snapshot?: string;
 };
 
-function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRequest {
+/** Create flags a restore cannot honor: the snapshot fixes the image, and restore takes no labels, env or lifetime. */
+const notWithSnapshot = ["image", "prepared", "build", "label", "ttl", "env", "env-file"] as const;
+
+function createRequest(
+  flags: Flags,
+  env: Record<string, string> = {},
+  withEnv = false,
+): CreateRequest {
   if (flags.string("image") && flags.string("prepared"))
     throw usage("Pass either --image or --prepared, not both");
 
   if (flags.bool("build") && !flags.string("image")) throw usage("--build needs --image");
   const ttl = flags.string("ttl");
+  const snapshot = flags.string("snapshot");
+
+  if (snapshot) {
+    // For run, --env and --env-file belong to the command, not the sandbox, so they stay allowed.
+    const conflicting = notWithSnapshot.find(
+      (name) => flags.has(name) && (withEnv || (name !== "env" && name !== "env-file")),
+    );
+
+    if (conflicting)
+      throw usage(
+        `--snapshot cannot be combined with --${conflicting}`,
+        "a restore keeps the snapshot's image and the profile's labels, environment and lifetime",
+      );
+  }
 
   return {
     build: flags.bool("build"),
@@ -107,6 +137,7 @@ function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRe
     labels: parsePairs(flags.strings("label"), "label"),
     env,
     lifetimeSeconds: ttl === undefined ? undefined : parseDuration(ttl, "ttl"),
+    snapshot,
   };
 }
 
@@ -266,9 +297,27 @@ async function liveCount(store: StateStore): Promise<number> {
 }
 
 /** Shared by create and run: claim the name, create, then record the reference. */
+/** A restore runs on the profile that captured the snapshot; a different explicit one is a mistake. */
+async function restoreProfile(session: Session, source: SnapshotRecord): Promise<ResolvedProfile> {
+  const { profile, provider } = session.ctx.flags;
+
+  if (profile !== undefined || provider !== undefined) {
+    const chosen = await session.profile();
+
+    if (chosen.name !== source.profile)
+      throw usage(
+        `Snapshot ${source.name} belongs to profile ${source.profile}, not ${chosen.name}`,
+        "drop --profile/--provider; a restore uses the snapshot's profile",
+      );
+  }
+
+  return session.profileNamed(source.profile);
+}
+
 async function createSandbox(session: Session, request: CreateRequest): Promise<Created> {
   const store = await session.store();
-  const profile = await session.profile();
+  const source = request.snapshot ? await snapshotSource(session, request.snapshot) : null;
+  const profile = source ? await restoreProfile(session, source) : await session.profile();
 
   if (request.name && request.ifNotExists) {
     const current = await store.get("sandbox", checkName(request.name));
@@ -306,7 +355,7 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
       provider: profile.provider,
       createdAt: new Date().toISOString(),
       labels: request.labels,
-      image: request.image ?? request.prepared,
+      image: source ? `snapshot:${source.name}` : (request.image ?? request.prepared),
       reference: null,
     },
     request.name,
@@ -346,7 +395,9 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
   let box: SandboxHandle<true>;
 
   try {
-    box = await client.sandboxes.create(input, { signal: session.ctx.signal });
+    box = source
+      ? await restoreSnapshot(session, client, source, request.network)
+      : await client.sandboxes.create(input, { signal: session.ctx.signal });
   } catch (cause) {
     const report = describeError(cause);
 
@@ -354,7 +405,7 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
       await store.remove("sandbox", claimed.record.name, claimed.version);
 
       // Adapters without a default image reject an argument-free create in SDK terms.
-      if (report.code === "INVALID_ARGUMENT" && !input.environment)
+      if (report.code === "INVALID_ARGUMENT" && !input.environment && !source)
         throw new CliError(
           "INVALID_ARGUMENT",
           `${profile.provider} needs an image for this sandbox: ${report.message}`,
@@ -434,7 +485,7 @@ function sandboxSummary(record: SandboxRecord) {
 export type Target = Versioned & { fromFile?: true };
 
 /** A store name, a native id held in the store, or `@file.json` with a saved reference. */
-async function findTarget(session: Session, target: string): Promise<Target> {
+export async function findTarget(session: Session, target: string): Promise<Target> {
   const store = await session.store();
 
   if (target.startsWith("@")) {
@@ -492,7 +543,7 @@ async function findTarget(session: Session, target: string): Promise<Target> {
 export async function createCommand(session: Session, flags: Flags): Promise<number> {
   const created = await createSandbox(
     session,
-    createRequest(flags, await envFlags(session, flags)),
+    createRequest(flags, await envFlags(session, flags), true),
   );
 
   if (created.unrecorded) throw unrecordedError(created);

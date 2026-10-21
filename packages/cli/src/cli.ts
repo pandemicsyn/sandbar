@@ -26,6 +26,7 @@ import {
 } from "./output";
 import { Session, type Context } from "./session";
 import { imageCommand } from "./images";
+import { snapshotCommand } from "./snapshots";
 import { skillCommand } from "./skill";
 import { adapterCommand } from "./adapters";
 import { complete, completionCommand, formatCompletion } from "./completion";
@@ -123,6 +124,11 @@ const createFlags = {
     description:
       "Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime",
   },
+  snapshot: {
+    type: "string",
+    value: "name",
+    description: "Restore a snapshot recorded by `sandbar snapshot create` instead of an image",
+  },
 } satisfies Record<string, FlagSpec>;
 
 const execFlags = {
@@ -181,7 +187,7 @@ export const commands: readonly CommandSpec[] = [
     name: "create",
     summary: "Create a sandbox and print its name",
     usage:
-      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--ttl <duration>] [--env K=V]...",
+      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id> | --snapshot <name>] [--network <policy>] [--ttl <duration>] [--env K=V]...",
     flags: {
       ...createFlags,
       "if-not-exists": {
@@ -337,6 +343,42 @@ export const commands: readonly CommandSpec[] = [
       "sandbar image forget python-3-12",
     ],
     run: imageCommand,
+  },
+  {
+    name: "snapshot",
+    summary: "Capture a sandbox as a snapshot, and list, inspect, delete or forget snapshots",
+    usage:
+      "sandbar snapshot create <sandbox> [--name <name> [--replace]] | ls [--remote] | inspect <name> | rm <name> [--force] | forget <name>",
+    flags: {
+      name: {
+        type: "string",
+        value: "name",
+        description: "Record name for a capture (default: <sandbox>-snap)",
+      },
+      replace: {
+        type: "boolean",
+        description: "Capture --name again; the old snapshot is deleted once the new one exists",
+      },
+      remote: {
+        type: "boolean",
+        description: "List the snapshots on the provider for this profile, not the local records",
+      },
+      force: {
+        type: "boolean",
+        description: "Delete a recorded snapshot this CLI did not verifiably capture",
+      },
+    },
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "sandbar snapshot create web --name deps",
+      "sandbar create --snapshot deps --name web-2",
+      "sandbar run --snapshot deps -- npm test",
+      "sandbar snapshot create web --name deps --replace",
+      "sandbar snapshot ls",
+      "sandbar snapshot rm deps",
+    ],
+    run: snapshotCommand,
   },
   {
     name: "cp",

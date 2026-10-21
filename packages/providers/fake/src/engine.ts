@@ -101,7 +101,12 @@ const ImageSchema = z.strictObject({
   projectId: z.string().min(1),
   state: z.enum(["ready", "deleted"]),
   createdAt: z.iso.datetime(),
+  /** A snapshot is an image captured from a sandbox: restores start with these files. */
+  files: z.record(z.string(), FakeFileBytesBase64).optional(),
 });
+
+/** Snapshot images record their source sandbox as `snapshot:<native id>`. */
+const SNAPSHOT_SOURCE = "snapshot:";
 
 const LedgerEntrySchema = z
   .strictObject({
@@ -613,6 +618,12 @@ export class FakeProviderEngine {
         if (input.env && Object.keys(input.env).length) resource.env = { ...input.env };
 
         if (input.lifetimeSeconds !== undefined) resource.lifetimeSeconds = input.lifetimeSeconds;
+
+        const captured = this.state.images.find(
+          (image) => image.id === input.image && sameScope(image.scope, input.scope),
+        )?.files;
+
+        if (captured) resource.files = { ...captured };
         this.state.resources.push(resource);
 
         const result: z.infer<typeof DriverResult> = {
@@ -685,9 +696,7 @@ export class FakeProviderEngine {
   images(scope: NativeScope, cursor: string | undefined, limit: number) {
     const all = [
       this.image(scope, { imageId: FAKE_STARTER_IMAGE })!,
-      ...this.state.images
-        .filter((image) => sameScope(image.scope, scope) && image.state === "ready")
-        .map((image) => this.imageView(image)),
+      ...this.ready(scope, false).map((image) => this.imageView(image)),
     ];
 
     const start = Number(cursor ?? 0);
@@ -695,11 +704,46 @@ export class FakeProviderEngine {
 
     return start + limit < all.length ? { items, nextCursor: String(start + limit) } : { items };
   }
+  /** Ready built images (`snapshots` false) or captured snapshots (true) in this scope. */
+  private ready(scope: NativeScope, snapshots: boolean) {
+    return this.state.images.filter(
+      (image) =>
+        sameScope(image.scope, scope) &&
+        image.state === "ready" &&
+        image.source.startsWith(SNAPSHOT_SOURCE) === snapshots,
+    );
+  }
+  snapshots(scope: NativeScope, cursor: string | undefined, limit: number) {
+    const all = this.ready(scope, true).map((image) => this.imageView(image));
+    const start = Number(cursor ?? 0);
+    const items = all.slice(start, start + limit);
+
+    return start + limit < all.length ? { items, nextCursor: String(start + limit) } : { items };
+  }
+  /** Capture a running sandbox's files as a snapshot image; one capture per submission. */
+  async captureSnapshot(input: {
+    scope: NativeScope;
+    identity: InvocationIdentity;
+    sandbox: SandboxRef;
+  }): Promise<{ image: FakeImage | null; created: boolean; loseResponse: boolean }> {
+    const resource = this.find(input.sandbox);
+
+    if (resource?.state !== "running" || !sameScope(input.sandbox.scope, input.scope))
+      return { image: null, created: false, loseResponse: false };
+
+    return this.buildImage({
+      scope: input.scope,
+      identity: input.identity,
+      source: `${SNAPSHOT_SOURCE}${input.sandbox.nativeId}`,
+      files: resource.files,
+    });
+  }
   /** One build per submission: a repeated submission returns the original image, never another. */
   async buildImage(input: {
     scope: NativeScope;
     identity: InvocationIdentity;
     source: string;
+    files?: Record<string, string>;
   }): Promise<{ image: FakeImage | null; created: boolean; loseResponse: boolean }> {
     return this.mutate(
       () => {
@@ -732,6 +776,7 @@ export class FakeProviderEngine {
           createdAt: iso(this.state.tick++),
         };
 
+        if (input.files) image.files = { ...input.files };
         this.state.images.push(image);
 
         return {

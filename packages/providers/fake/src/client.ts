@@ -412,6 +412,61 @@ export class FakeProviderDriver implements ProviderDriver {
 
     return image.data;
   }
+  /** Submit one capture; a lost or invalid response is unknown and is never resubmitted. */
+  async captureSnapshot(input: {
+    scope: NativeScope;
+    identity: InvocationIdentity;
+    sandbox: SandboxRef;
+  }) {
+    let value: z.infer<typeof FakeHttpJson>;
+
+    try {
+      value = await this.call({ kind: "snapshotCapture", ...input });
+    } catch (error) {
+      if (error instanceof FakeTransportError && [400, 401, 403, 413].includes(error.status))
+        return {
+          status: "rejected" as const,
+          reason: `Fake snapshot capture rejected (${error.status})`,
+        };
+
+      return { status: "unknown" as const, reason: "Fake snapshot capture response unavailable" };
+    }
+
+    const parsed = z
+      .strictObject({ image: FakeImage.nullable(), created: z.boolean() })
+      .safeParse(value);
+
+    if (!parsed.success)
+      return { status: "unknown" as const, reason: "Fake snapshot capture response is invalid" };
+
+    if (!parsed.data.image)
+      return { status: "rejected" as const, reason: "Fake sandbox is not running" };
+
+    if (parsed.data.image.submissionId !== input.identity.submissionId)
+      return { status: "unknown" as const, reason: "Fake snapshot capture returned another image" };
+
+    return {
+      status: "completed" as const,
+      image: parsed.data.image,
+      created: parsed.data.created,
+    };
+  }
+  async listSnapshots(input: { scope: NativeScope; cursor?: string; limit: number }) {
+    const parsed = z
+      .strictObject({
+        items: z.array(FakeImage).max(input.limit),
+        nextCursor: FakeInventoryCursor.optional(),
+      })
+      .safeParse(await this.readCall({ kind: "snapshotList", ...input }));
+
+    if (!parsed.success)
+      throw new ProviderReadError(
+        "INVALID_RESPONSE",
+        "Fake snapshot inventory response is invalid",
+      );
+
+    return parsed.data;
+  }
   async listImages(input: { scope: NativeScope; cursor?: string; limit: number }) {
     const parsed = z
       .strictObject({
