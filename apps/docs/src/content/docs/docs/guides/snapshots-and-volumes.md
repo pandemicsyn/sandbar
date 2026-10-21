@@ -65,7 +65,7 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 | Modal             | Private root filesystem                   | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
 | boxd              | Private disk, RAM and process state       | Brief pause; keeps running                | Resume captured processes in a new machine       |
 
-Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
+Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
 
 ```ts
 const captured = await source.snapshot({

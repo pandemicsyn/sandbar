@@ -71,6 +71,8 @@ const NativeBox = z
     public: z.boolean().optional(),
     autoDestroyAt: z.string().nullable().optional(),
     autoStopInterval: z.number().nullable().optional(),
+    /** Linux VMs only; Daytona pauses idle VMs after 60 minutes unless auto-stop is set. */
+    autoPauseInterval: z.number().nullable().optional(),
     autoDeleteInterval: z.number().nullable().optional(),
     /** Native quota: CPU cores and memory in GiB. */
     cpu: z.number().optional(),
@@ -87,6 +89,17 @@ const NativeBox = z
     volumes: value.volumes ?? [],
   }));
 
+/** Sandbox classes with mapped cold capture: Daytona stops either class before a filesystem-only capture. */
+const CaptureClass = z.enum(["container", "linux-vm"]);
+
+type CaptureClass = z.infer<typeof CaptureClass>;
+
+function captureClass(value: string | undefined): CaptureClass | null {
+  const parsed = CaptureClass.safeParse(value);
+
+  return parsed.success ? parsed.data : null;
+}
+
 const CaptureFacts = z.strictObject({
   preserve: z.literal("filesystem"),
   interruption: z.enum(["none", "stop"]),
@@ -96,6 +109,8 @@ const CaptureFacts = z.strictObject({
 const Token = z.strictObject({
   name: z.string().min(1).max(128),
   sourceId: z.string().min(1).max(512),
+  /** Checkpoints saved before Linux VM capture was mapped are container captures. */
+  sourceClass: CaptureClass.default("container"),
   initialState: z.enum(["running", "stopped"]),
   restartRequired: z.boolean(),
   stopState: z
@@ -399,11 +414,15 @@ export function daytonaState(input: {
     if (v.organizationId !== scope.authority.id && !v.general)
       throw new AdapterError("CONFLICT", "Snapshot organization differs");
 
+    // Containers only take cold captures. A Linux VM capture may include memory, which the
+    // native record does not report, so its depth is known only from this adapter's own capture.
+    const cold = Boolean(v.sourceSandboxId) && v.sandboxClass === "container";
+
     return {
       reference: reference("snapshot", v.id, ownership),
-      preserve: v.sourceSandboxId && v.sandboxClass === "container" ? "filesystem" : null,
+      preserve: cold ? "filesystem" : null,
       consistency: "unknown",
-      restoreExecution: v.sourceSandboxId && v.sandboxClass === "container" ? "fresh" : null,
+      restoreExecution: cold ? "fresh" : null,
       source: v.sourceSandboxId
         ? { id: v.sourceSandboxId, class: v.sandboxClass ?? "unknown" }
         : null,
@@ -484,10 +503,12 @@ export function daytonaState(input: {
     if (
       evidence?.kind === "snapshot" &&
       evidence.preserve === "filesystem" &&
-      evidence.sourceClass === "container" &&
+      captureClass(evidence.sourceClass) !== null &&
       evidence.sourceId === v.sourceSandboxId &&
-      v.sandboxClass === "container"
+      v.sandboxClass === evidence.sourceClass
     ) {
+      info.preserve = "filesystem";
+      info.restoreExecution = "fresh";
       info.mountHandling = "none";
       info.consistency = evidence.consistency ?? "unknown";
       info.reference.history = ref.history;
@@ -588,7 +609,7 @@ export function daytonaState(input: {
     if (!target.sandbox)
       return {
         status: "unknown" as const,
-        reason: "Capture eligibility requires actual container source evidence",
+        reason: "Capture eligibility requires actual source sandbox evidence",
       };
     const source = await box(target.sandbox.id, ctx, target.sandbox.reference);
 
@@ -596,11 +617,12 @@ export function daytonaState(input: {
   }
 
   function profileFor(source: z.infer<typeof NativeBox>) {
-    if (source.sandboxClass !== "container")
+    const sourceClass = captureClass(source.sandboxClass);
+
+    if (!sourceClass)
       return {
         status: "unsupported" as const,
-        reason:
-          "Only cold container capture has portable exact-preservation evidence; VM memory/cold provenance is not mapped",
+        reason: "Only cold capture of container and Linux VM sandboxes is mapped",
       };
 
     if (source.volumes.length)
@@ -610,7 +632,7 @@ export function daytonaState(input: {
       };
 
     const profile: SnapshotProfile = {
-      id: "daytona-container-cold",
+      id: profileId(sourceClass),
       preserve: "filesystem",
       sourceStates: ["running", "stopped"],
       interruption: source.state === "started" ? "stop" : "none",
@@ -628,6 +650,10 @@ export function daytonaState(input: {
     };
   }
 
+  function profileId(sourceClass: CaptureClass) {
+    return `daytona-${sourceClass}-cold`;
+  }
+
   async function observedCapture(
     name: string,
     sourceId: string,
@@ -635,6 +661,7 @@ export function daytonaState(input: {
     ctx: ReadContext,
     consistency: SnapshotInfo["consistency"] = "unknown",
     expectedId?: string,
+    sourceClass: CaptureClass = "container",
   ) {
     const response = await request("GET", `/snapshots/${encodeURIComponent(name)}`, undefined, ctx);
 
@@ -646,7 +673,7 @@ export function daytonaState(input: {
       v.name !== name ||
       v.sourceSandboxId !== sourceId ||
       v.organizationId !== scope.authority.id ||
-      v.sandboxClass !== "container"
+      v.sandboxClass !== sourceClass
     )
       return null;
 
@@ -654,17 +681,21 @@ export function daytonaState(input: {
     const info = snapshotInfo(v, acknowledged ? "verified-created" : "unknown");
     info.consistency = consistency;
 
-    if (acknowledged)
+    if (acknowledged) {
+      // This adapter dispatched the capture with includeMemory false.
+      info.preserve = "filesystem";
+      info.restoreExecution = "fresh";
       info.reference.history = history.issue({
         version: 1,
         kind: "snapshot",
         nativeId: v.id,
         sourceId,
-        sourceClass: "container",
+        sourceClass,
         preserve: "filesystem",
         mounts: "none",
         consistency,
       });
+    }
 
     if (["error", "failed"].includes(v.state)) throw new TerminalCaptureError(info);
 
@@ -923,7 +954,7 @@ export function daytonaState(input: {
 
     return (
       token.initialState === accepted.sourceState &&
-      profile.id === "daytona-container-cold" &&
+      profile.id === profileId(token.sourceClass) &&
       token.capture.preserve === profile.preserve &&
       token.capture.interruption === profile.interruption &&
       token.capture.restoreExecution === profile.restoreExecution &&
@@ -1096,6 +1127,7 @@ export function daytonaState(input: {
           { signal: ctx.signal, deadline: Date.now() + 5000 },
           token.consistency,
           token.snapshotId,
+          token.sourceClass,
         );
       } catch {
         return ctx.unknown("Captured snapshot inspection is unavailable", captureOutcome(token));
@@ -1159,6 +1191,7 @@ export function daytonaState(input: {
           ctx,
           token.consistency,
           token.snapshotId,
+          token.sourceClass,
         );
 
         if (info) {
@@ -1433,7 +1466,16 @@ export function daytonaState(input: {
 
         token.captureState = "accepted";
         await ctx.checkpoint(token);
-        let info = await observedCapture(name, source.id, true, context, token.consistency);
+
+        let info = await observedCapture(
+          name,
+          source.id,
+          true,
+          context,
+          token.consistency,
+          undefined,
+          token.sourceClass,
+        );
 
         if (info) {
           token.snapshotId = info.reference.nativeId;
@@ -1454,6 +1496,7 @@ export function daytonaState(input: {
             context,
             token.consistency,
             token.snapshotId,
+            token.sourceClass,
           );
 
           if (info) {
@@ -1646,10 +1689,14 @@ export function daytonaState(input: {
           return ctx.reject("UNAVAILABLE", "Snapshot capture plan changed before submission");
 
         if (initial === "unknown") return ctx.reject("UNAVAILABLE", "Source is not capturable");
+        const sourceClass = captureClass(source.sandboxClass);
+
+        if (!sourceClass) return ctx.reject("UNSUPPORTED", "Source class is not capturable");
 
         const token: z.infer<typeof Token> = {
           name,
           sourceId: source.id,
+          sourceClass,
           initialState: initial,
           sourceState: initial,
           sourceObservedState: initial,
@@ -1983,7 +2030,7 @@ export function daytonaState(input: {
     return response;
   }
 
-  async function transition(id: string, action: "stop" | "start", signal: AbortSignal) {
+  async function transition(id: string, action: "stop" | "start" | "pause", signal: AbortSignal) {
     const response = await request(
       "POST",
       `/sandbox/${encodeURIComponent(id)}/${action}`,

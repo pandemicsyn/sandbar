@@ -97,11 +97,20 @@ The lifetime is a hard wall-clock deadline. When it passes, Daytona deletes the 
 
 Idle stop is separate from the lifetime and renewing does not disable it. Daytona natively stops sandboxes after 15 idle minutes, even with background processes running; the adapter turns that off unless you set `lifecycle.idleSeconds`. `inspect()` reports the policy as `idleStop`.
 
-`suspend()` stops the container and `resume()` starts it under the same id. Files are kept; processes end and sockets drop. The lifetime keeps running while suspended and resume does not reset it. Only containers with no mounts and Daytona's auto-delete-after-stop disabled qualify: mounted sandboxes reject `UNSUPPORTED` and enabled auto-delete rejects `UNAVAILABLE`. Suspending an inactive sandbox or resuming a running one rejects `CONFLICT`. See [Renew lifetime](/docs/guides/resources/#renew-lifetime) and [Suspend and resume](/docs/guides/resources/#suspend-and-resume).
+`suspend()` and `resume()` keep the same sandbox id, and what is kept depends on the sandbox class, which comes from the snapshot you create from:
+
+| Class     | `suspend()`                                              | `resume()`                                               |
+| --------- | -------------------------------------------------------- | -------------------------------------------------------- |
+| Container | Stops it. Files are kept; processes end.                 | Starts fresh processes (`execution: "fresh"`).           |
+| Linux VM  | Pauses it. Files, memory and running processes are kept. | Continues the paused processes (`execution: "resumed"`). |
+
+Sockets drop in both cases; reconnect after resume. Set `lifecycle: { suspension: { preserve: "filesystem" } }` to stop Linux VMs too. `"filesystem+memory"` pauses Linux VMs and rejects containers with `UNSUPPORTED` before any change. If a paused VM is later stopped, its memory is gone and resume reports `execution: "fresh"`. Daytona pauses idle Linux VMs on its own after 60 minutes unless idle stop is set; `inspect().idleStop` reports this as `action: "suspend"`.
+
+The lifetime keeps running while suspended and resume does not reset it. Only sandboxes with no mounts and Daytona's auto-delete-after-stop disabled qualify: mounted sandboxes reject `UNSUPPORTED` and enabled auto-delete rejects `UNAVAILABLE`. Suspending an inactive sandbox or resuming a running one rejects `CONFLICT`. See [Renew lifetime](/docs/guides/resources/#renew-lifetime) and [Suspend and resume](/docs/guides/resources/#suspend-and-resume).
 
 ## Snapshots and volumes
 
-`box.snapshot()` stops a running sandbox, captures its filesystem, and starts it again (unless `snapshots.restartAfterCapture` is `false`). An already stopped source stays stopped. Processes end; memory and volumes are not captured. If the capture succeeds but the restart fails, the error is `SOURCE_RESTART_FAILED` and still carries the snapshot reference. Snapshots survive their source. Deleting one is refused while a warm pool uses it or warm pools cannot be read.
+`box.snapshot()` stops a running sandbox, captures its filesystem, and starts it again (unless `snapshots.restartAfterCapture` is `false`). An already stopped source stays stopped. Processes end; memory and volumes are not captured. This applies to containers and Linux VMs alike; a Linux VM snapshot restores as a new Linux VM. Restoring a Linux VM snapshot with volumes is unsupported. If the capture succeeds but the restart fails, the error is `SOURCE_RESTART_FAILED` and still carries the snapshot reference. Snapshots survive their source. Deleting one is refused while a warm pool uses it or warm pools cannot be read.
 
 Volumes are object storage, not POSIX filesystems: no file locking or atomic rename. They attach at create, or when restoring a snapshot taken without mounts, with optional subpaths. Restore with mounts needs `internet` or `daytona-default`; `blocked` rejects. On mounted paths, `writeFile` needs `overwrite: true`; no-clobber writes, stream writes and copy/move destinations reject `UNSUPPORTED` before any change; and a completed write does not guarantee durability at shutdown. See [Snapshots and volumes](/docs/guides/snapshots-and-volumes/).
 

@@ -52,6 +52,7 @@ function fixture() {
     public: false,
     autoDestroyAt: "2026-10-01T01:00:00Z",
     autoStopInterval: 5,
+    autoPauseInterval: 0,
     autoDeleteInterval: -1,
     sandboxClass: "container",
     // SAFETY: This deterministic fixture allows omitted native mount metadata.
@@ -97,14 +98,22 @@ function fixture() {
         return Response.json({ items: [native] });
 
       if (
-        ["/api/sandbox/native-reopen/stop", "/api/sandbox/native-reopen/start"].includes(
-          url.pathname,
-        )
+        [
+          "/api/sandbox/native-reopen/stop",
+          "/api/sandbox/native-reopen/start",
+          "/api/sandbox/native-reopen/pause",
+        ].includes(url.pathname)
       ) {
         enteredPost();
 
         if (renewMode === "hold") await postHeld;
-        native.state = url.pathname.endsWith("/stop") ? "stopped" : "started";
+        native.state = url.pathname.endsWith("/stop")
+          ? "stopped"
+          : url.pathname.endsWith("/pause")
+            ? renewMode === "pause-stops"
+              ? "stopped"
+              : "paused"
+            : "started";
 
         if (renewMode === "lost") throw new TypeError("lost ACK");
 
@@ -669,7 +678,7 @@ test.each(["mounted", "unknown-mounts", "transition", "missing", "class", "auto-
 
       if (gate === "missing") f.status(404);
 
-      if (gate === "class") f.native.sandboxClass = "linux-vm";
+      if (gate === "class") f.native.sandboxClass = "windows";
 
       if (gate === "auto-delete") f.native.autoDeleteInterval = 0;
       await expect(box.suspend()).rejects.toMatchObject({
@@ -847,12 +856,160 @@ test("Daytona lifecycle cancellation before dispatch has no effect; after dispat
   }
 });
 
-test("Daytona rejects memory minimum at connection before allocation", async () => {
+test("Daytona memory suspension rejects a container before POST", async () => {
   const f = fixture();
-  await expect(
-    f.connect({ lifecycle: { suspension: { preserve: "filesystem+memory" } } }),
-  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
-  expect(f.calls).toHaveLength(0);
+
+  const { client, box } = await create(f, {
+    lifecycle: { suspension: { preserve: "filesystem+memory" } },
+  });
+
+  try {
+    expect((await box.capabilities()).lifecycle?.suspend).toMatchObject({
+      status: "unsupported",
+    });
+    await expect(box.suspend()).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect(f.calls.filter((c) => c.startsWith("POST /api/sandbox/native-reopen/"))).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona Linux VM suspend pauses with memory and resume continues execution", async () => {
+  for (const preserve of [undefined, "filesystem+memory"] as const) {
+    const f = fixture();
+    const config: Parameters<ReturnType<typeof fixture>["connect"]>[0] = {};
+
+    if (preserve) config.lifecycle = { suspension: { preserve } };
+    const { client, box } = await create(f, config);
+    f.native.sandboxClass = "linux-vm";
+
+    try {
+      const saved = JSON.parse(JSON.stringify(box.reference));
+      expect((await box.capabilities()).lifecycle?.suspend).toMatchObject({
+        status: "supported",
+        value: { preserve: "filesystem+memory", processes: "preserved", connections: "dropped" },
+      });
+      const op = await box.submitSuspend();
+      const suspended = await op.wait();
+      expect(suspended).toMatchObject({
+        reference: saved,
+        preserve: "filesystem+memory",
+        processes: "preserved",
+        connections: "dropped",
+        observation: { state: "suspended", nativeState: "paused" },
+      });
+      await expect(box.suspend()).rejects.toMatchObject({ code: "CONFLICT", effect: "none" });
+
+      const fresh = await f.connect({}, undefined, "rotated-key");
+
+      try {
+        const recovered = await fresh.recover(JSON.parse(JSON.stringify(op.reference)));
+
+        if (recovered.kind !== "sandbox_suspend") throw Error("kind");
+        expect(await recovered.wait()).toEqual(suspended);
+        const reopened = await fresh.sandboxes.get(saved);
+        expect((await reopened.inspect()).state).toBe("suspended");
+        const resumed = await reopened.resume();
+        expect(resumed).toMatchObject({
+          reference: saved,
+          execution: "resumed",
+          executionIdentity: { status: "unknown" },
+          connections: "dropped",
+          observation: { state: "running" },
+        });
+      } finally {
+        await fresh.close();
+      }
+
+      expect(f.calls.filter((c) => c.startsWith("POST /api/sandbox/native-reopen/"))).toEqual([
+        "POST /api/sandbox/native-reopen/pause",
+        "POST /api/sandbox/native-reopen/start",
+      ]);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test("Daytona Linux VM configured filesystem suspension stops and resumes fresh", async () => {
+  const f = fixture();
+
+  const { client, box } = await create(f, {
+    lifecycle: { suspension: { preserve: "filesystem" } },
+  });
+
+  f.native.sandboxClass = "linux-vm";
+
+  try {
+    expect((await box.capabilities()).lifecycle?.suspend).toMatchObject({
+      status: "supported",
+      value: { preserve: "filesystem", processes: "terminated" },
+    });
+    expect(await box.suspend()).toMatchObject({
+      preserve: "filesystem",
+      processes: "terminated",
+      observation: { state: "stopped" },
+    });
+    expect(await box.resume()).toMatchObject({ execution: "fresh" });
+    expect(f.calls.filter((c) => c.startsWith("POST /api/sandbox/native-reopen/"))).toEqual([
+      "POST /api/sandbox/native-reopen/stop",
+      "POST /api/sandbox/native-reopen/start",
+    ]);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona Linux VM pause that ends stopped never confirms memory", async () => {
+  const f = fixture();
+  const { client, box } = await create(f);
+  f.native.sandboxClass = "linux-vm";
+  f.renewMode("pause-stops");
+
+  try {
+    const op = await box.submitSuspend();
+    await expect(op.wait()).rejects.toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      outcome: {
+        kind: "sandbox_suspend",
+        status: "partial",
+        acknowledged: true,
+        preserve: "filesystem+memory",
+        observation: { state: "stopped" },
+      },
+    });
+    const recovered = await client.recover(JSON.parse(JSON.stringify(op.reference)));
+    await expect(recovered.wait()).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    // A VM stopped by another actor resumes fresh: its memory is gone.
+    expect(await box.resume()).toMatchObject({ execution: "fresh" });
+    expect(f.calls.filter((c) => c === "POST /api/sandbox/native-reopen/pause")).toHaveLength(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona Linux VM inspection reports idle auto-pause as suspension", async () => {
+  const f = fixture();
+  const { client, box } = await create(f);
+
+  try {
+    f.native.sandboxClass = "linux-vm";
+    f.native.autoStopInterval = 0;
+    f.native.autoPauseInterval = 60;
+    expect((await box.inspect()).idleStop).toEqual({
+      status: "known",
+      value: { seconds: 3600, action: "suspend" },
+    });
+    f.native.autoPauseInterval = 0;
+    expect((await box.inspect()).idleStop).toEqual({ status: "known", value: null });
+    // SAFETY: This deterministic fixture omits the native auto-pause field.
+    (f.native as { autoPauseInterval?: number }).autoPauseInterval = undefined;
+    expect((await box.inspect()).idleStop.status).toBe("unknown");
+    f.native.sandboxClass = "container";
+    expect((await box.inspect()).idleStop).toEqual({ status: "known", value: null });
+  } finally {
+    await client.close();
+  }
 });
 
 test.each(["suspend", "resume"] as const)(

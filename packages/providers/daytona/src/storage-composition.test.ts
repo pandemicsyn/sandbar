@@ -367,3 +367,156 @@ test.each([
     }
   },
 );
+
+test("Linux VM cold capture restores unmounted and rejects mounted restore before effects", async () => {
+  let state = "started";
+  let snapshotName = "";
+  let restoreLabels: Record<string, string> = {};
+  let sourceLabels: Record<string, string> = {};
+  const names: Record<string, string> = {};
+  let restores = 0;
+
+  const vm = (id: string, labels: Record<string, string>, snapshot: string) => ({
+    id,
+    name: names[id] ?? "",
+    organizationId: "org-1",
+    target: "us",
+    state: id === "source" ? state : "started",
+    networkBlockAll: false,
+    public: false,
+    sandboxClass: "linux-vm",
+    snapshot,
+    labels,
+    volumes: [],
+  });
+
+  const snapshot = () => ({
+    id: "captured-vm",
+    general: false,
+    name: snapshotName,
+    organizationId: "org-1",
+    state: "active",
+    sandboxClass: "linux-vm",
+    sourceSandboxId: "source",
+    regionIds: ["us"],
+  });
+
+  const fetchImpl: typeof fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const route = new URL(String(input)).pathname;
+      const method = init?.method ?? "GET";
+
+      if (route === "/api/api-keys/current") return Response.json({ organizationId: "org-1" });
+
+      if (route === "/api/regions")
+        return Response.json([{ id: "us", name: "US", regionType: "shared" }]);
+
+      if (route === "/api/organizations/org-1")
+        return Response.json({ id: "org-1", sandboxLimitedNetworkEgress: false });
+
+      if (route === "/api/warm-pools") return Response.json([]);
+
+      if (route === "/api/snapshots/vm-base")
+        return Response.json({ ...snapshot(), id: "vm-base", name: "vm-base" });
+
+      if (route.startsWith("/api/snapshots/"))
+        return snapshotName ? Response.json(snapshot()) : new Response(null, { status: 404 });
+
+      if (route.startsWith("/api/volumes/"))
+        return Response.json({
+          id: "volume-1",
+          name: "data",
+          organizationId: "org-1",
+          state: "ready",
+        });
+
+      if (route === "/api/sandbox/source/stop" || route === "/api/sandbox/source/start") {
+        state = route.endsWith("/stop") ? "stopped" : "started";
+
+        return Response.json({});
+      }
+
+      if (route === "/api/sandbox/source/snapshot") {
+        const body = z
+          .object({ name: z.string(), includeMemory: z.literal(false) })
+          .parse(JSON.parse(String(init?.body)));
+
+        expect(state).toBe("stopped");
+        snapshotName = body.name;
+
+        return Response.json({ id: "source", state });
+      }
+
+      if (route === "/api/sandbox/source")
+        return Response.json(vm("source", sourceLabels, "vm-base"));
+
+      if (route === "/api/sandbox/restored")
+        return Response.json(vm("restored", restoreLabels, "captured-vm"));
+
+      if (route === "/api/sandbox" && method === "POST") {
+        const body = z
+          .object({
+            name: z.string(),
+            snapshot: z.string(),
+            labels: z.record(z.string(), z.string()),
+          })
+          .parse(JSON.parse(String(init?.body)));
+
+        names[body.snapshot === "vm-base" ? "source" : "restored"] = body.name;
+
+        if (body.snapshot === "vm-base") {
+          sourceLabels = body.labels;
+
+          return Response.json(vm("source", sourceLabels, "vm-base"));
+        }
+
+        expect(body.snapshot).toBe("captured-vm");
+        restores++;
+        restoreLabels = body.labels;
+
+        return Response.json(vm("restored", restoreLabels, "captured-vm"));
+      }
+
+      throw new Error(`Unexpected VM fixture route: ${method} ${route}`);
+    },
+    { preconnect: fetch.preconnect },
+  );
+
+  const client = await Sandbar.connect({
+    adapter: createDaytonaAdapter(fetchImpl),
+    config: { target: "us", networkPolicy: "daytona-default" },
+    credentials: { apiKey: "fixture" },
+  });
+
+  try {
+    const source = await client.sandboxes.create({ environment: Image.prepared("vm-base") });
+    const capture = await source.snapshot();
+    expect(capture.capture).toEqual({
+      preserve: "filesystem",
+      interruption: "stop",
+      restoreExecution: "fresh",
+    });
+    const info = await capture.snapshot.inspect();
+    expect(info).toMatchObject({ preserve: "filesystem", restore: { mounts: false } });
+
+    const volume = await client.volumes.get({
+      version: 1,
+      kind: "volume",
+      provider: "daytona",
+      scope: capture.snapshot.reference.scope,
+      nativeId: "volume-1",
+      ownership: "unknown",
+    });
+
+    await expect(
+      capture.snapshot.restore({ networkPolicy: "daytona-default", mounts: [volume.at("/data")] }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+    expect(restores).toBe(0);
+
+    const restored = await capture.snapshot.restore({ networkPolicy: "daytona-default" });
+    expect(restored.id).toBe("restored");
+    expect(restores).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
