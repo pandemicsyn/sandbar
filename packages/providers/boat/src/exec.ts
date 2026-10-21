@@ -29,7 +29,8 @@ export type WrapperInput = {
   maxBytes: number;
 };
 
-export function wrapperScript(input: WrapperInput): string {
+/** The user's command as one sh line: optional `cd`, then `exec env` with quoted assignments. */
+export function commandLine(input: Pick<WrapperInput, "command" | "cwd" | "env">): string {
   if (input.command.kind === "argv" && input.command.argv.length === 0)
     throw new AdapterError("INVALID_ARGUMENT", "argv must name a program");
 
@@ -46,7 +47,12 @@ export function wrapperScript(input: WrapperInput): string {
       : `/bin/sh -c ${quote(input.command.script)}`;
 
   const run = `exec env -- ${[...env, program].join(" ")}`;
-  const body = input.cwd === undefined ? run : `cd -- ${quote(input.cwd)} && ${run}`;
+
+  return input.cwd === undefined ? run : `cd -- ${quote(input.cwd)} && ${run}`;
+}
+
+export function wrapperScript(input: WrapperInput): string {
+  const body = commandLine(input);
   const stdin = input.stdinPath === undefined ? "/dev/null" : quote(input.stdinPath);
   const bound = Math.max(0, Math.floor(input.maxBytes));
 
