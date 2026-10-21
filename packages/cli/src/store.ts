@@ -77,16 +77,50 @@ export const ImageRecord = z.strictObject({
 
 export type ImageRecord = z.infer<typeof ImageRecord>;
 
-type Records = { sandbox: SandboxRecord; image: ImageRecord };
+export const SnapshotRecord = z.strictObject({
+  format: z.literal(1),
+  kind: z.literal("snapshot"),
+  name: RecordName,
+  /**
+   * `capturing` claims the name before the provider call; `unknown` keeps an uncertain capture;
+   * `deleting` keeps a delete whose outcome is unknown until `sandbar snapshot rm` confirms it.
+   */
+  status: z.enum(["capturing", "captured", "unknown", "deleting"]),
+  profile: z.string().min(1),
+  provider: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+  /** Store name of the sandbox it was captured from. */
+  sandbox: z.string().min(1),
+  /** What the capture keeps: `filesystem` or `filesystem+memory`. */
+  preserve: z.string().min(1).nullable(),
+  reference: ResourceReference.extend({ kind: z.literal("snapshot") }).nullable(),
+  recovery: z
+    .custom<RecoveryReference>(
+      (value) => z.record(z.string(), z.unknown()).safeParse(value).success,
+    )
+    .optional(),
+});
+
+export type SnapshotRecord = z.infer<typeof SnapshotRecord>;
+
+type Records = { sandbox: SandboxRecord; image: ImageRecord; snapshot: SnapshotRecord };
 
 export type RecordKind = keyof Records;
 
 /** The schema that guards each kind of record on every read and write. */
 type RecordSchemas = { [K in RecordKind]: z.ZodType<Records[K]> };
 
-const schemas: RecordSchemas = { sandbox: SandboxRecord, image: ImageRecord };
+const schemas: RecordSchemas = {
+  sandbox: SandboxRecord,
+  image: ImageRecord,
+  snapshot: SnapshotRecord,
+};
 
-const folders = { sandbox: "sandboxes", image: "images" } satisfies Record<RecordKind, string>;
+const folders = {
+  sandbox: "sandboxes",
+  image: "images",
+  snapshot: "snapshots",
+} satisfies Record<RecordKind, string>;
 
 export type Versioned<R = SandboxRecord> = { record: R; version: string };
 

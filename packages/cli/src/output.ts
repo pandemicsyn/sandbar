@@ -2,6 +2,7 @@ import {
   OutcomeUnknownError,
   SandbarError,
   type RecoveryReference,
+  type ResourceReference,
   type SandboxReference,
 } from "sandbar-sdk";
 
@@ -45,6 +46,10 @@ export type Known = {
   sandbox?: string;
   /** The image record an uncertain `sandbar image build` keeps. */
   image?: string;
+  /** The snapshot record an uncertain `sandbar snapshot create` or `rm` keeps. */
+  snapshot?: string;
+  /** The snapshot a capture made when recording it failed. */
+  snapshotReference?: ResourceReference;
   reference?: SandboxReference | null;
   /** The SDK's operation reference for an uncertain create; `sandbar rm` uses it to recover. */
   recovery?: RecoveryReference;

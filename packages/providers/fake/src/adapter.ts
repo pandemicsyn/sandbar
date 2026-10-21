@@ -8,6 +8,8 @@ import {
   type AdapterSession,
   type AttemptContext,
   type ImageInfo,
+  type SnapshotInfo,
+  type SnapshotProfile,
   type NativeProcess,
   type NativeProcessExit,
   type ProcessStartInput,
@@ -32,6 +34,31 @@ const ImageDeleteToken = z.strictObject({
 const Empty = z.strictObject({});
 
 const Token = z.strictObject({ submissionId: z.string().min(1).max(128) });
+
+const CaptureToken = z.strictObject({
+  submissionId: z.string().min(1).max(128),
+  sandbox: z.string().min(1).max(512),
+});
+
+/** Fake snapshots copy the sandbox's files; a restore starts fresh with them. */
+const snapshotProfile: SnapshotProfile = {
+  id: "fake-files",
+  preserve: "filesystem",
+  sourceStates: ["running"],
+  interruption: "none",
+  sourceAfter: "unchanged",
+  connections: "preserved",
+  consistency: "crash-consistent",
+  restoreExecution: "fresh",
+  mountHandling: "none",
+};
+
+const restoreSupport = {
+  networkPolicies: ["blocked"],
+  resources: false,
+  mounts: false,
+  independentLifecycle: true,
+};
 
 const errorCodes = {
   invalid: "INVALID_ARGUMENT",
@@ -120,6 +147,8 @@ export function createFakeAdapter(options: {
   token: string;
   fetch?: typeof fetch;
   imageBuild?: boolean;
+  /** Capture sandbox files as snapshots and restore from them, like a filesystem snapshot. */
+  snapshots?: boolean;
   /**
    * Stream seeded exec fixtures as sustained byte processes. The output arrives at start; the
    * process then stays running for `holdMs` (default 0) unless it is terminated, which exits 143.
@@ -351,6 +380,194 @@ export function createFakeAdapter(options: {
         },
       };
 
+      const snapshotRef = (
+        id: string,
+        ownership: ResourceReference["ownership"],
+      ): ResourceReference => ({ ...imageRef(id, ownership), kind: "snapshot" });
+
+      const checkSnapshot = (ref: ResourceReference) => {
+        assertResourceScope(ref, { provider: "fake", scope: bindingScope });
+
+        if (ref.kind !== "snapshot")
+          throw new AdapterError("INVALID_ARGUMENT", "Wrong resource kind");
+      };
+
+      const snapshotInfo = (image: FakeImage, reference: ResourceReference): SnapshotInfo => ({
+        reference,
+        preserve: "filesystem",
+        restoreExecution: "fresh",
+        consistency: "crash-consistent",
+        source: image.source
+          ? { id: image.source.replace(/^snapshot:/, ""), class: "fake-sandbox" }
+          : null,
+        state: "ready",
+        createdAt: image.createdAt,
+        expiration: "unknown",
+        excludedPaths: [],
+        mounts: [],
+        mountHandling: "none",
+        restore: restoreSupport,
+        dependencies: [],
+        nativeDependencies: null,
+      });
+
+      const requireSnapshot = async (ref: ResourceReference) => {
+        checkSnapshot(ref);
+        const image = await driver.inspectImage(scope, { imageId: ref.nativeId });
+
+        if (!image?.source?.startsWith("snapshot:"))
+          throw new AdapterError("NOT_FOUND", "Fake snapshot does not exist");
+
+        return image;
+      };
+
+      const captured = (image: FakeImage, created: boolean) => {
+        const reference = snapshotRef(image.id, created ? "verified-created" : "unknown");
+
+        return {
+          snapshot: snapshotInfo(image, reference),
+          capture: {
+            preserve: "filesystem" as const,
+            interruption: "none" as const,
+            restoreExecution: "fresh" as const,
+          },
+          source: { state: "running" as const, connections: "preserved" as const },
+          retainedResources: [reference],
+        };
+      };
+
+      const snapshots: Pick<
+        AdapterSession,
+        | "snapshotProfiles"
+        | "snapshotCapture"
+        | "snapshotInspect"
+        | "snapshotListCoverage"
+        | "snapshotList"
+        | "snapshotDelete"
+        | "snapshotRestore"
+      > = {
+        async snapshotProfiles() {
+          return {
+            status: "supported",
+            value: { profiles: [snapshotProfile], defaultProfileId: snapshotProfile.id },
+          };
+        },
+        snapshotCapture: {
+          recovery: { version: 1, token: CaptureToken },
+          async submit(input, ctx) {
+            await ctx.checkpoint({ submissionId: ctx.submissionId, sandbox: input.sandbox.id });
+
+            const result = await driver.captureSnapshot({
+              scope,
+              identity: identity(ctx),
+              sandbox: native(input.sandbox.id),
+            });
+
+            if (result.status === "rejected") return ctx.reject("CONFLICT", result.reason);
+
+            if (result.status === "unknown")
+              return ctx.unknown(`${result.reason}; no capture replay`);
+
+            return captured(result.image, result.created);
+          },
+          async observe(attempt, ctx) {
+            const token = CaptureToken.safeParse(attempt.token);
+
+            if (!token.success || token.data.submissionId !== attempt.submissionId)
+              return ctx.unknown("Fake snapshot evidence is unavailable; no capture replay");
+
+            const image = await driver.inspectImage(scope, { submissionId: attempt.submissionId });
+
+            return image ? captured(image, false) : null;
+          },
+        },
+        async snapshotInspect(ref) {
+          return snapshotInfo(await requireSnapshot(ref), structuredClone(ref));
+        },
+        snapshotListCoverage: "provider-scope",
+        async snapshotList(input) {
+          const page = await driver.listSnapshots({
+            scope,
+            cursor: input.cursor,
+            limit: input.limit,
+          });
+
+          return {
+            items: page.items.map((image) => snapshotInfo(image, snapshotRef(image.id, "unknown"))),
+            nextCursor: page.nextCursor,
+            coverage: "provider-scope",
+          };
+        },
+        snapshotDelete: {
+          async prepare(ref) {
+            await requireSnapshot(ref);
+
+            return ref;
+          },
+          async submit(ref, ctx) {
+            const result = await driver.deleteImage({
+              scope,
+              identity: identity(ctx),
+              imageId: ref.nativeId,
+            });
+
+            if (result.status === "deleted") return { deleted: true as const, reference: ref };
+
+            if (result.status === "not_found")
+              return ctx.reject("NOT_FOUND", "Fake snapshot does not exist");
+
+            if (result.status === "rejected")
+              return ctx.reject("CONFLICT", "Fake snapshot is in use by a running sandbox");
+
+            return ctx.unknown("Fake snapshot delete response was lost; observe without replay");
+          },
+          async observe(attempt, ctx) {
+            const ref = attempt.resource;
+
+            if (!ref) return ctx.unknown("Fake snapshot delete evidence is unavailable");
+            checkSnapshot(ref);
+
+            return (await driver.inspectImage(scope, { imageId: ref.nativeId }))
+              ? ctx.unknown("Fake snapshot is still present; no delete replay")
+              : { deleted: true as const, reference: ref };
+          },
+        },
+        snapshotRestore: {
+          recovery: { version: 1, token: Token },
+          async prepare(input) {
+            if (input.request.resources || input.request.mounts?.length)
+              throw new AdapterError("UNSUPPORTED", "Fake restores take no sizing or mounts");
+
+            if (!restoreSupport.networkPolicies.includes(input.request.networkPolicy))
+              throw new AdapterError("UNSUPPORTED", "Fake restores use blocked network only");
+            await requireSnapshot(input.snapshot);
+
+            return input;
+          },
+          async submit(input, ctx) {
+            return createResult(
+              await driver.create({
+                scope,
+                identity: identity(ctx),
+                image: input.snapshot.nativeId,
+                networkPolicy: input.request.networkPolicy,
+              }),
+              ctx,
+              bindingScope,
+            );
+          },
+          async observe(attempt, ctx) {
+            const result = await driver.observe({
+              scope,
+              submissionId: attempt.submissionId,
+              operationId: attempt.operationId,
+            });
+
+            return result ? observedCreate(result, ctx, attempt, bindingScope) : null;
+          },
+        },
+      };
+
       const processes = options.processes && {
         supports: {
           sustainedOutput: true as const,
@@ -434,8 +651,17 @@ export function createFakeAdapter(options: {
         },
       };
 
+      const snapshotHooks = options.snapshots ? snapshots : undefined;
+
       return {
         ...images,
+        snapshotProfiles: snapshotHooks?.snapshotProfiles,
+        snapshotCapture: snapshotHooks?.snapshotCapture,
+        snapshotInspect: snapshotHooks?.snapshotInspect,
+        snapshotListCoverage: snapshotHooks?.snapshotListCoverage,
+        snapshotList: snapshotHooks?.snapshotList,
+        snapshotDelete: snapshotHooks?.snapshotDelete,
+        snapshotRestore: snapshotHooks?.snapshotRestore,
         imageBuild: options.imageBuild ? imageBuild : undefined,
         processes,
         scope: bindingScope,

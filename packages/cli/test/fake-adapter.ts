@@ -209,3 +209,6 @@ export const otherAccount = bindAdapter(
   {},
   {},
 );
+
+/** The fake adapter with simulated filesystem snapshots, like Daytona, E2B or Modal. */
+export const snapshotting = bindAdapter(createFakeAdapter({ url, token, snapshots: true }), {}, {});

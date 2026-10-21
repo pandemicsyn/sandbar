@@ -72,6 +72,27 @@ To keep provider settings in one place instead of environment variables, see [Co
 - Directory copies keep file modes and symlinks. They move one tar archive and unpack it with one command, so the sandbox needs `tar` (without it they fail with exit 4 and `UNSUPPORTED` before anything is sent). Copying out never writes through a symlink, never leaves the destination folder, and drops setuid bits. Files deleted locally are not deleted from an earlier copy in the sandbox.
 - `--image <oci-ref>` boots an OCI image on boxd and Modal. E2B and Daytona need it built once with `sandbar image build <oci-ref>`; until then `--image` fails before creating anything, and `--build` builds it during the command instead. `--prepared <id>` picks a provider template or snapshot. `sandbar image ls`, `inspect`, `rm` and `forget` manage the recorded builds: `rm` deletes the template or snapshot on the provider and drops the record (only builds this CLI created, unless you pass `--force`), while `forget` only drops the record and lists what the provider still holds. `sandbar image ls --remote` lists the provider's own images. If `image rm` exits 6, the outcome is unknown; running it again asks the provider how the delete ended without resending it.
 
+## Snapshots
+
+A snapshot saves a sandbox's state so new sandboxes can start from it, for example a checkout with its dependencies already installed:
+
+```sh
+sandbar create --name base --network internet
+sandbar sh base 'git clone https://github.com/acme/app /work/app && cd /work/app && npm ci'
+sandbar snapshot create base --name deps
+sandbar rm base
+
+sandbar run --snapshot deps --cwd /work/app -- npm test
+```
+
+`snapshot create <sandbox>` captures a sandbox from the store and records the snapshot under `--name` (default `<sandbox>-snap`). What it keeps, files only or memory too, and whether the source pauses during capture depend on the provider and the profile's `snapshots.preserve`; the command prints both. A provider that cannot capture fails with exit 4 before anything happens.
+
+`create --snapshot <name>` and `run --snapshot <name>` start a sandbox from a recorded snapshot, on the profile that captured it. The snapshot fixes the image, so `--image`, `--prepared` and `--build` do not apply, and neither do `--label`, `--ttl` or create-time `--env`: the profile's settings are used instead. `run --env` still sets the command's environment.
+
+To refresh a snapshot, capture it again with `snapshot create <sandbox> --name <name> --replace`. The record keeps the old snapshot until the new one exists, then the old one is deleted. A snapshot still in use by a running sandbox can't be deleted; the command says so and leaves it on the provider.
+
+`snapshot ls` lists the recorded snapshots and `snapshot ls --remote` the provider's own. `snapshot inspect <name>` shows a snapshot's state. `snapshot rm <name>` deletes it on the provider and drops the record (only snapshots this CLI captured, unless you pass `--force`), while `snapshot forget <name>` only drops the record. Snapshots are kept until you delete them, and some providers charge for storage. If `snapshot create` or `snapshot rm` exits 6, the outcome is unknown: `snapshot inspect` or running `snapshot rm` again checks how it ended without sending it twice.
+
 ## JSON output for agents and scripts
 
 Add `--json`, or set `SANDBAR_JSON=1`, and stdout holds exactly one JSON document:

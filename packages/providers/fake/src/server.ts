@@ -111,6 +111,7 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
             action.kind === "writeFile" ||
             action.kind === "destroy" ||
             action.kind === "imageBuild" ||
+            action.kind === "snapshotCapture" ||
             action.kind === "imageDelete"
           ) {
             return json({
@@ -207,6 +208,16 @@ export async function startFakeProviderServer(options: FakeServerOptions) {
               : json({ image: outcome.image, created: outcome.created });
           }
 
+          case "snapshotCapture": {
+            const outcome = await engine.captureSnapshot(action);
+
+            return outcome.loseResponse
+              ? json({ error: "response_lost" }, 504)
+              : json({ image: outcome.image, created: outcome.created });
+          }
+
+          case "snapshotList":
+            return json(engine.snapshots(action.scope, action.cursor, action.limit));
           case "imageInspect":
             return json(engine.image(action.scope, action));
           case "imageList":

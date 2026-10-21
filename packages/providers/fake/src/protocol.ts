@@ -106,6 +106,18 @@ export const FakeAction = z.discriminatedUnion("kind", [
     limit: z.number().int().min(1).max(100),
   }),
   z.strictObject({
+    kind: z.literal("snapshotCapture"),
+    scope: NativeScope,
+    identity: InvocationIdentity,
+    sandbox: SandboxRef,
+  }),
+  z.strictObject({
+    kind: z.literal("snapshotList"),
+    scope: NativeScope,
+    cursor: FakeInventoryCursor.optional(),
+    limit: z.number().int().min(1).max(100),
+  }),
+  z.strictObject({
     kind: z.literal("imageDelete"),
     scope: NativeScope,
     identity: InvocationIdentity,

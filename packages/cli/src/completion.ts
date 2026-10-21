@@ -1,6 +1,7 @@
 import type { Flags } from "./commands";
 import { usage } from "./output";
 import { imageActions } from "./images";
+import { snapshotActions } from "./snapshots";
 import { adapterActions } from "./adapters";
 import { providers } from "./providers";
 import type { Session } from "./session";
@@ -40,6 +41,15 @@ async function sandboxNames(session: Session): Promise<Candidate[]> {
   return entries.map(({ record }) => ({
     value: record.name,
     description: `${record.provider}, ${record.status}`,
+  }));
+}
+
+async function snapshotNames(session: Session): Promise<Candidate[]> {
+  const entries = await listAll(await session.store(), "snapshot");
+
+  return entries.map(({ record }) => ({
+    value: record.name,
+    description: `${record.sandbox} on ${record.profile}, ${record.status}`,
   }));
 }
 
@@ -103,6 +113,8 @@ export async function complete(
     if (fileFlags.has(flag)) return { candidates: [], directive: Files };
 
     if (flag === "profile") return { candidates: await profileNames(session), directive: 0 };
+
+    if (flag === "snapshot") return { candidates: await snapshotNames(session), directive: 0 };
 
     if (flag === "provider")
       return {
@@ -170,6 +182,19 @@ export async function complete(
         directive: 0,
       };
     }
+
+    return none;
+  }
+
+  if (command.name === "snapshot") {
+    if (positionals.length === 0)
+      return { candidates: snapshotActions.map((action) => ({ value: action })), directive: 0 };
+
+    if (positionals.length === 1 && positionals[0] === "create")
+      return { candidates: await sandboxNames(session), directive: 0 };
+
+    if (positionals.length === 1 && ["inspect", "forget", "rm"].includes(positionals[0]!))
+      return { candidates: await snapshotNames(session), directive: 0 };
 
     return none;
   }
