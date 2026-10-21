@@ -71,8 +71,12 @@ export const plain = bindAdapter(
 const terminations = process.env.SANDBAR_FAKE_TERMINATIONS;
 
 /** The fake adapter with its byte-streaming process transport; SANDBAR_FAKE_TERMINATIONS logs terminations. */
-function streamingAdapter(holdMs: number) {
-  const processing = createFakeAdapter({ url: url!, token: token!, processes: { holdMs } });
+function streamingAdapter(holdMs: number, textOnly = false) {
+  const processing = createFakeAdapter({
+    url: url!,
+    token: token!,
+    processes: { holdMs, textOnly },
+  });
 
   return bindAdapter(
     defineAdapter({
@@ -117,6 +121,9 @@ export const streaming = streamingAdapter(0);
 
 /** Streams the output, then keeps running for a minute unless it is terminated. */
 export const hanging = streamingAdapter(60_000);
+
+/** Streams text only and keeps running, like Boat or Runloop. */
+export const hangingText = streamingAdapter(60_000, true);
 
 const builds = process.env.SANDBAR_FAKE_BUILDS;
 

@@ -1131,31 +1131,20 @@ async function streamExec(
 ): Promise<Streamed | null> {
   const { out, signal } = session.ctx;
   const seconds = input.deadlineSeconds ?? defaultTimeoutSeconds;
-  let running: ProcessHandle<"bytes">;
 
-  try {
-    running = await box.processes.start(
-      {
-        command: input.command,
-        cwd: input.cwd,
-        env: input.env,
-        stdin: input.stdin ? "pipe" : "closed",
-        output: { mode: "stream", format: "bytes" },
-      },
-      { signal },
-    );
-  } catch (cause) {
-    if (cause instanceof SandbarError && cause.code === "UNSUPPORTED" && cause.effect === "none")
-      return null;
-    throw cause;
-  }
+  // Bytes keep the command's own encoding; text-only transports (Boat, Runloop) still stream.
+  const running =
+    (await startStream(box, input, signal, "bytes")) ??
+    (await startStream(box, input, signal, "text"));
+
+  if (!running) return null;
 
   const deadline = AbortSignal.timeout(seconds * 1000);
   const stop = AbortSignal.any([signal, deadline]);
 
   const pumped = (async () => {
     for await (const chunk of running.output({ signal: stop }))
-      out.streams[chunk.stream](chunk.bytes);
+      out.streams[chunk.stream]("bytes" in chunk ? chunk.bytes : chunk.text);
   })().then(
     () => undefined,
     (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -1197,9 +1186,42 @@ async function streamExec(
   }
 }
 
+type StreamHandle = ProcessHandle<"bytes"> | ProcessHandle<"text">;
+
+/** Start a streaming process, or return null when the provider rejects it before dispatch. */
+async function startStream(
+  box: SandboxHandle<true>,
+  input: ExecInput,
+  signal: AbortSignal,
+  format: "bytes" | "text",
+): Promise<StreamHandle | null> {
+  const request = {
+    command: input.command,
+    cwd: input.cwd,
+    env: input.env,
+    stdin: input.stdin ? ("pipe" as const) : ("closed" as const),
+  };
+
+  try {
+    return format === "bytes"
+      ? await box.processes.start<"bytes">(
+          { ...request, output: { mode: "stream", format: "bytes" } },
+          { signal },
+        )
+      : await box.processes.start<"text">(
+          { ...request, output: { mode: "stream", format: "text" } },
+          { signal },
+        );
+  } catch (cause) {
+    if (cause instanceof SandbarError && cause.code === "UNSUPPORTED" && cause.effect === "none")
+      return null;
+    throw cause;
+  }
+}
+
 /** Let output that arrived before the exit finish printing, without waiting forever on it. */
 async function drained(
-  running: ProcessHandle<"bytes">,
+  running: StreamHandle,
   pumped: Promise<Error | undefined>,
   exit: ProcessExit,
   out: Output,
