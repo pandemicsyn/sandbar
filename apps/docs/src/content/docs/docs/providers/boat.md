@@ -48,10 +48,15 @@ Everything below is tested on every change, using the real Boat client against a
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | Compute lifecycle | Create with an `Idempotency-Key`, inspect, inventory, reference reopening, and destroy by permanent delete with confirmed teardown.                     | No          |
 | Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to 600 seconds.                 | No          |
+| Streaming output  | Live stdout/stderr as UTF-8 text from detached commands, with no 600-second cap; stop with `terminate()`. No byte output.                               | No          |
 | Files             | Binary read and overwrite write up to 5 MiB, under `/home/user` or `/tmp`. No-clobber writes are unsupported.                                           | No          |
 | Suspend/resume    | `suspend()` archives the disk and stops the machine; `resume()` restores the disk onto a fresh machine. Memory, processes and connections are not kept. | No          |
 | Renewal           | `renew()` sets a new auto-stop window of 60 seconds to 30 days.                                                                                         | No          |
-| Unsupported       | Snapshots, volumes, previews, interactive processes, directory operations, blocked egress, regions and labels.                                          | —           |
+| Unsupported       | Snapshots, volumes, previews, piped input, byte streaming, terminals, directory operations, blocked egress, regions and labels.                         | —           |
+
+## How streamed commands work
+
+`processes.start({ output: { mode: "stream" } })` starts the command detached, so Boat's 600-second limit does not apply, then follows `GET /commands/{processId}/stream`. Boat sends output there as UTF-8 text with byte offsets, and ends each connection after 10 minutes with a reconnect line; the adapter reattaches from those offsets, so nothing is lost or repeated. A dropped connection is reattached for up to 60 seconds. Invalid UTF-8 in the command's output is replaced by Boat, so byte output (`format: "bytes"`) and callback exec are not supported. Stdin is `/dev/null`. `terminate()` stops the command through Boat's stop endpoint; `detach()` leaves it running.
 
 ## How commands keep bytes and arguments
 

@@ -39,6 +39,7 @@ const Body = z
     content: z.string().default(""),
     encoding: z.string().optional(),
     command: z.string().default(""),
+    detached: z.boolean().optional(),
   })
   .default({ path: "", content: "", command: "" });
 
@@ -120,6 +121,12 @@ export function boatFixture() {
   let held: Promise<void> | undefined;
   let commandFault: Response | "lost" | undefined;
   let commandOverride: ((command: string) => CommandResult) | undefined;
+  /** Scripted attach responses for detached commands, consumed one per connection. */
+  const attaches: Array<{ frames: Json[]; hold?: boolean } | { status: number } | "cut"> = [];
+  const attachQueries: string[] = [];
+  let releaseAttach: ((frames: Json[]) => void) | undefined;
+  let nextProcessId = 100;
+  const stopped: number[] = [];
   /** Polls a sandbox needs before it reports `ready`. */
   let provisioningPolls = 1;
 
@@ -348,6 +355,63 @@ export function boatFixture() {
       });
     }
 
+    const processPath = /^commands\/(\d+)(\/stream)?$/.exec(rest ?? "");
+
+    if (processPath && method === "GET" && processPath[2]) {
+      attachQueries.push(url.search);
+      const next = attaches.shift();
+
+      if (next === undefined) return error(404, "process_not_found");
+
+      if (next === "cut") throw new TypeError("fetch failed");
+
+      if ("status" in next) return error(next.status, "attach_failed");
+
+      const encoder = new TextEncoder();
+      const line = (frame: Json) => encoder.encode(`${JSON.stringify(frame)}\n`);
+
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const frame of next.frames) controller.enqueue(line(frame));
+
+            if (!next.hold) {
+              controller.close();
+
+              return;
+            }
+
+            releaseAttach = (frames) => {
+              for (const frame of frames) controller.enqueue(line(frame));
+              controller.close();
+            };
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/x-ndjson" } },
+      );
+    }
+
+    if (processPath && method === "DELETE" && !processPath[2]) {
+      stopped.push(Number(processPath[1]));
+
+      return json(200, { ok: true, type: "command.stopped", signaled: true, command: null });
+    }
+
+    if (rest === "commands" && method === "POST" && body.detached) {
+      commands.push(body.command);
+      const processId = nextProcessId++;
+
+      return json(200, {
+        ok: true,
+        type: "command.started",
+        success: true,
+        processId,
+        pid: 4242,
+        command: body.command,
+        startedAt: new Date(0).toISOString(),
+      });
+    }
+
     if (rest === "commands" && method === "POST") {
       if (!["ready", "idle", "running"].includes(box.state)) return error(409, "sandbox_not_ready");
       const fault = commandFault;
@@ -398,6 +462,17 @@ export function boatFixture() {
       calls.filter((call) => call.method === method && pattern.test(call.path)).length,
     setProvisioningPolls(value: number) {
       provisioningPolls = value;
+    },
+    attaches,
+    attachQueries,
+    stopped,
+    get attachHeld() {
+      return releaseAttach !== undefined;
+    },
+    releaseAttach(frames: Json[]) {
+      if (!releaseAttach) throw new Error("No held attach");
+      releaseAttach(frames);
+      releaseAttach = undefined;
     },
     failNextCommand(response: Response | "lost") {
       commandFault = response;

@@ -35,6 +35,7 @@ import {
   refusedBeforeEffect,
   type NativeFailure,
 } from "./transport";
+import { startBoatProcess } from "./process";
 
 /** Prepared image value for Boat's stock Ubuntu machine; a dot is never valid in a snapshot name. */
 export const BASE_IMAGE = "ubuntu-24.04";
@@ -141,6 +142,7 @@ type Native = Pick<
   | "deleteSandbox"
   | "getDeletionOperation"
   | "command"
+  | "stopCommand"
   | "readFile"
   | "writeFile"
   | "stop"
@@ -653,6 +655,23 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
             return (await deleted(token.data, ctx))
               ? { computeStopped: true, retainedResources: [] }
               : ctx.pending(token.data, { pollAfterMs: pollMs });
+          },
+        },
+        processes: {
+          supports: { sustainedOutput: true },
+          async start(input, ctx) {
+            await requireRunning(input.sandbox, ctx);
+
+            return startBoatProcess(
+              {
+                native,
+                apiKey: credentials.apiKey,
+                fetch: options.fetch ?? globalThis.fetch,
+                init,
+              },
+              input,
+              ctx,
+            );
           },
         },
         exec: {
