@@ -133,6 +133,7 @@ const managementExitCodes = new Map([
   ["UNSUPPORTED", 4],
   ["ADAPTER_NOT_INSTALLED", 4],
   ["ADAPTER_LOAD_FAILED", 4],
+  ["ADAPTER_INSTALLER_MISSING", 4],
   ["LIMIT_REACHED", 4],
   ["SECRET_TOOL_MISSING", 4],
   ["SECRET_UNAVAILABLE", 5],

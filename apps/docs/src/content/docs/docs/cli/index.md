@@ -11,11 +11,12 @@ Install the CLI, then the adapter for each provider you use. Adapters live in th
 
 ```sh
 npm install -g @sandbar-sdk/cli
-mkdir -p ~/.config/sandbar/adapters
-npm install --prefix ~/.config/sandbar/adapters @sandbar-sdk/e2b
+sandbar adapter add e2b
 ```
 
-The CLI runs on Node.js or Bun. `sandbar providers` lists the official adapters, whether each is installed and which credentials are missing.
+The CLI runs on Node.js or Bun; `sandbar adapter` uses npm to install. `sandbar adapter add` takes one or more provider ids (`daytona`, `e2b`, `vercel`, `boxd`, `modal`, `runloop`, `boat`) and installs each official adapter at the same version as the CLI, so the two always match. It then imports the package to check that the adapter is there. Running it again with nothing to change skips npm, so it is safe in CI setup steps. `sandbar adapter ls` shows what is installed and flags an official adapter whose version differs from the CLI's; `sandbar adapter rm e2b` removes one.
+
+`sandbar providers` lists the official adapters, whether each is installed and which credentials are missing.
 
 ## Quick start
 

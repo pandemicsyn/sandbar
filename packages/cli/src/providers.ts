@@ -328,7 +328,12 @@ function rootEntry(manifest: z.infer<typeof PackageManifest>): string {
   return (root === undefined ? null : exportTarget(root)) ?? manifest.main ?? "index.js";
 }
 
-async function entryFor(packageDir: string): Promise<string | null> {
+/** The folder `sandbar adapter add` installs into: its own package.json and node_modules. */
+export function adaptersDir(env: Env): string {
+  return join(configHome(env), "adapters");
+}
+
+export async function entryFor(packageDir: string): Promise<string | null> {
   const manifestPath = join(packageDir, "package.json");
 
   if (!(await exists(manifestPath))) return null;
@@ -347,7 +352,7 @@ async function entryFor(packageDir: string): Promise<string | null> {
   return entry;
 }
 
-const PackageName = /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+export const PackageName = /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 
 /**
  * Adapters are installed separately and receive credentials, so they come from
@@ -367,7 +372,7 @@ export async function resolveAdapterModule(
   if (!PackageName.test(spec))
     throw usage(`Adapter module ${spec} is not a package name or a path`);
 
-  const roots = [join(configHome(env), "adapters", "node_modules")];
+  const roots = [join(adaptersDir(env), "node_modules")];
 
   if (profile.searchProject)
     for (let dir = resolve(cwd); ; dir = dirname(dir)) {
@@ -385,7 +390,7 @@ export async function resolveAdapterModule(
   return spec;
 }
 
-function isAdapter(
+export function isAdapter(
   value: unknown,
 ): value is AdapterDefinition<z.ZodType, z.ZodType, RuntimeSession> | BoundAdapter {
   return value instanceof Object && "name" in value && "connect" in value && "config" in value;
@@ -423,7 +428,7 @@ export async function loadAdapter(
         "ADAPTER_NOT_INSTALLED",
         `Cannot load adapter ${profile.module} for profile ${profile.name}: ${message}`,
         official
-          ? `install it into ${join(configHome(env), "adapters")} (cd there && npm install ${official.module}); project installs need adapters.searchProject or SANDBAR_PROJECT_ADAPTERS=1`
+          ? `install it with \`sandbar adapter add ${official.id}\` (into ${adaptersDir(env)}); project installs need adapters.searchProject or SANDBAR_PROJECT_ADAPTERS=1`
           : "check the profile's module path",
       );
 

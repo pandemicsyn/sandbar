@@ -1,6 +1,7 @@
 import type { Flags } from "./commands";
 import { usage } from "./output";
 import { imageActions } from "./images";
+import { adapterActions } from "./adapters";
 import { providers } from "./providers";
 import type { Session } from "./session";
 import { listAll } from "./store";
@@ -169,6 +170,22 @@ export async function complete(
         directive: 0,
       };
     }
+
+    return none;
+  }
+
+  if (command.name === "adapter") {
+    if (positionals.length === 0)
+      return { candidates: adapterActions.map((action) => ({ value: action })), directive: 0 };
+
+    if (positionals[0] === "add" || positionals[0] === "rm")
+      return {
+        candidates: providers.map((provider) => ({
+          value: provider.id,
+          description: provider.module,
+        })),
+        directive: 0,
+      };
 
     return none;
   }

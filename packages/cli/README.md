@@ -18,7 +18,7 @@ sandbar rm web
 sandbar run -- python3 -c 'print(2 + 2)'   # create, run, always destroy
 ```
 
-The adapter package must be installed where the CLI can find it: in `~/.config/sandbar/adapters` (`cd ~/.config/sandbar/adapters && npm install @sandbar-sdk/e2b`) or next to the CLI itself. Adapters receive your credentials, so the current project's `node_modules` is searched only when you opt in with `"adapters": { "searchProject": true }` or `SANDBAR_PROJECT_ADAPTERS=1`. `sandbar providers` shows what is installed and which credentials are set.
+Install the adapter for each provider with `sandbar adapter add e2b` (or `daytona`, `vercel`, ...). It runs npm in `~/.config/sandbar/adapters`, pins the official adapter to the CLI's own version, and checks that the package exports the adapter. Third-party adapters are added by scoped package name (`sandbar adapter add @acme/sandbar-adapter`) or with an explicit `npm:` prefix; a bare unknown name is refused so a typo can't install someone else's package. The CLI also finds adapters installed next to itself. Adapters receive your credentials, so the current project's `node_modules` is searched only when you opt in with `"adapters": { "searchProject": true }` or `SANDBAR_PROJECT_ADAPTERS=1`. `sandbar providers` shows what is installed and which credentials are set.
 
 ## Commands
 
@@ -37,6 +37,7 @@ The adapter package must be installed where the CLI can find it: in `~/.config/s
 | `push <sandbox>[:/dir] [path]` | Send a local folder's git-tracked and unignored files (default `.` to `~/work`); `run --push <path>` does the same before its command |
 | `cat <sandbox>:/path` | Print a file |
 | `doctor` | Check config, credentials and the connection; creates nothing |
+| `adapter add <provider\|package>[@version]...`, `adapter ls`, `adapter rm <provider\|package>...` | Install, list or remove adapters in `~/.config/sandbar/adapters` |
 | `providers` | Official providers, install state and missing credentials |
 | `schema` | Machine-readable description of every command, flag and exit code |
 | `skill [install [--project]]` | Print the agent skill for this CLI, or install it for your coding agents |

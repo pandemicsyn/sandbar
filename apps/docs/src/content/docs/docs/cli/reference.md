@@ -26,19 +26,19 @@ With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                        |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | success                                                                                                                        |
-| 1    | other failure                                                                                                                  |
-| 2    | usage error; fix the command                                                                                                   |
-| 3    | not found                                                                                                                      |
-| 4    | unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached |
-| 5    | authentication or permission failure, or an unreadable password-manager secret                                                 |
-| 6    | outcome unknown: an effect may have happened, inspect before retrying                                                          |
-| 7    | retryable: rate limit, capacity or unavailable before any effect                                                               |
-| 8    | partial: some steps were confirmed; read error.known                                                                           |
-| 125  | exec/run: the CLI or provider failed; details in the error                                                                     |
-| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox                         |
+| Code | Meaning                                                                                                                                 |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success                                                                                                                                 |
+| 1    | other failure                                                                                                                           |
+| 2    | usage error; fix the command                                                                                                            |
+| 3    | not found                                                                                                                               |
+| 4    | unsupported by this provider or profile, adapter missing or broken, npm or a password-manager CLI not installed, or store limit reached |
+| 5    | authentication or permission failure, or an unreadable password-manager secret                                                          |
+| 6    | outcome unknown: an effect may have happened, inspect before retrying                                                                   |
+| 7    | retryable: rate limit, capacity or unavailable before any effect                                                                        |
+| 8    | partial: some steps were confirmed; read error.known                                                                                    |
+| 125  | exec/run: the CLI or provider failed; details in the error                                                                              |
+| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox                                  |
 
 ## create
 
@@ -330,6 +330,24 @@ Examples:
 
 ```sh
 sandbar doctor --provider e2b
+```
+
+## adapter
+
+Install, list or remove the adapters the CLI loads, in ~/.config/sandbar/adapters.
+
+```sh
+sandbar adapter add <provider|package>[@version]... | ls | rm <provider|package>...
+```
+
+Examples:
+
+```sh
+sandbar adapter add e2b
+sandbar adapter add daytona vercel --json
+sandbar adapter add @acme/sandbar-adapter@1.2.0
+sandbar adapter ls
+sandbar adapter rm e2b
 ```
 
 ## providers

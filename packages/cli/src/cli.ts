@@ -27,6 +27,7 @@ import {
 import { Session, type Context } from "./session";
 import { imageCommand } from "./images";
 import { skillCommand } from "./skill";
+import { adapterCommand } from "./adapters";
 import { complete, completionCommand, formatCompletion } from "./completion";
 import type { Env } from "./config";
 
@@ -383,6 +384,22 @@ export const commands: readonly CommandSpec[] = [
     run: doctorCommand,
   },
   {
+    name: "adapter",
+    summary: "Install, list or remove the adapters the CLI loads, in ~/.config/sandbar/adapters",
+    usage: "sandbar adapter add <provider|package>[@version]... | ls | rm <provider|package>...",
+    flags: {},
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "sandbar adapter add e2b",
+      "sandbar adapter add daytona vercel --json",
+      "sandbar adapter add @acme/sandbar-adapter@1.2.0",
+      "sandbar adapter ls",
+      "sandbar adapter rm e2b",
+    ],
+    run: adapterCommand,
+  },
+  {
     name: "providers",
     summary:
       "List official providers, whether their adapter is installed and their credentials set",
@@ -433,7 +450,7 @@ export const exitCodes = [
   {
     code: 4,
     meaning:
-      "unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached",
+      "unsupported by this provider or profile, adapter missing or broken, npm or a password-manager CLI not installed, or store limit reached",
   },
   {
     code: 5,
@@ -486,6 +503,7 @@ function topHelp(): string {
     ...flagLines(globalFlags),
     "",
     "Quick start:",
+    "  sandbar adapter add e2b",
     "  export SANDBAR_PROVIDER=e2b E2B_API_KEY=...",
     "  sandbar create --name web",
     "  sandbar exec web -- uname -a",
