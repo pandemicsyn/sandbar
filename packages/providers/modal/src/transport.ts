@@ -12,7 +12,7 @@ import {
 } from "modal";
 import { z } from "zod";
 import { AdapterError, type AdapterErrorCode } from "@sandbar-sdk/adapter";
-import { ModalRouterWire, type RouterRun } from "./router-wire";
+import { ModalRouterWire, type RouterOutput, type RouterRun } from "./router-wire";
 
 export const MODAL_ENDPOINT = "https://api.modal.com:443";
 
@@ -131,11 +131,19 @@ export interface ModalTransport {
   fileExists(sandboxId: string, path: string): Promise<boolean>;
   start(input: RouterRun, signal?: AbortSignal): Promise<void>;
   stdin(sandboxId: string, execId: string, bytes: Uint8Array, signal?: AbortSignal): Promise<void>;
+  stdinWrite?(
+    sandboxId: string,
+    execId: string,
+    offset: number,
+    bytes: Uint8Array | "eof",
+    signal?: AbortSignal,
+  ): Promise<void>;
   result(
     sandboxId: string,
     execId: string,
     maxBytes: number,
     signal?: AbortSignal,
+    onOutput?: RouterOutput,
   ): Promise<{
     exitCode: number;
     stdout: Uint8Array;
@@ -458,8 +466,10 @@ export function createSdkTransport(input: {
     },
     start: (input, signal) => router.start(input, signal),
     stdin: (sandboxId, execId, bytes, signal) => router.stdin(sandboxId, execId, bytes, signal),
-    result: (sandboxId, execId, maxBytes, signal) =>
-      router.result(sandboxId, execId, maxBytes, signal),
+    stdinWrite: (sandboxId, execId, offset, bytes, signal) =>
+      router.stdinWrite(sandboxId, execId, offset, bytes, signal),
+    result: (sandboxId, execId, maxBytes, signal, onOutput) =>
+      router.result(sandboxId, execId, maxBytes, signal, onOutput),
     close() {
       router.close();
       client.close();

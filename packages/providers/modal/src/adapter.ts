@@ -20,6 +20,7 @@ import {
   ModalCreateRejected,
   type ModalTransport,
 } from "./transport";
+import { startModalProcess } from "./process";
 
 const MAX_BYTES = 1_048_576;
 
@@ -606,6 +607,24 @@ export function createModalAdapter(
 
           // SAFETY: requireSnapshot checked the reference kind.
           return snapshotInfo(ref as ResourceReference & { kind: "snapshot" }, null);
+        },
+        processes: {
+          supports: {
+            sustainedOutput: true,
+            binaryOutput: true,
+            execCapture: "bytes",
+            stdin: transport.stdinWrite ? "bytes" : undefined,
+            signals: ["SIGTERM", "SIGKILL"],
+          },
+          async start(input, ctx) {
+            if (!(await find(input.sandbox.id)))
+              throw new AdapterError(
+                "NOT_FOUND",
+                "Modal sandbox was not found in the verified App",
+              );
+
+            return startModalProcess(transport, input, ctx);
+          },
         },
         exec: {
           finiteStdin: "bytes",

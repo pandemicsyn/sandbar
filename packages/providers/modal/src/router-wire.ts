@@ -102,8 +102,12 @@ export type RouterRun = {
   command: string[];
   cwd?: string;
   env?: Record<string, string>;
-  timeoutSeconds: number;
+  /** Native kill deadline; omitted means the command runs until it exits. */
+  timeoutSeconds?: number;
 };
+
+/** Live output: every chunk, unbounded, as it arrives. */
+export type RouterOutput = (stream: "stdout" | "stderr", bytes: Uint8Array) => void;
 
 export class ModalRouterWire {
   private readonly channels = new Set<Client>();
@@ -208,7 +212,7 @@ export class ModalRouterWire {
           ...input.command.map((arg) => field(3, arg)),
           field(4, 1),
           field(5, 1),
-          field(6, input.timeoutSeconds),
+          ...(input.timeoutSeconds === undefined ? [] : [field(6, input.timeoutSeconds)]),
           ...(input.cwd ? [field(7, input.cwd)] : []),
           ...env,
         ),
@@ -256,11 +260,50 @@ export class ModalRouterWire {
     }
   }
 
+  /** One stdin write at an exact offset, or EOF; a lost acknowledgement is never retried. */
+  async stdinWrite(
+    sandboxId: string,
+    execId: string,
+    offset: number,
+    bytes: Uint8Array | "eof",
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const { taskId, client, metadata } = await this.connect(sandboxId, signal);
+
+    try {
+      for (let start = 0; bytes !== "eof" && start < bytes.length; start += 65536)
+        await this.unary(
+          client,
+          metadata,
+          "TaskExecStdinWrite",
+          message(
+            field(1, taskId),
+            field(2, execId),
+            field(3, offset + start),
+            field(4, bytes.subarray(start, start + 65536)),
+          ),
+          signal,
+        );
+
+      if (bytes === "eof")
+        await this.unary(
+          client,
+          metadata,
+          "TaskExecStdinWrite",
+          message(field(1, taskId), field(2, execId), field(3, offset), field(5, 1)),
+          signal,
+        );
+    } finally {
+      this.release(client);
+    }
+  }
+
   async result(
     sandboxId: string,
     execId: string,
     maxBytes: number,
     signal?: AbortSignal,
+    onOutput?: RouterOutput,
   ): Promise<{ exitCode: number; stdout: Uint8Array; stderr: Uint8Array; truncated: boolean }> {
     const { taskId, client, metadata } = await this.connect(sandboxId, signal);
 
@@ -295,6 +338,9 @@ export class ModalRouterWire {
               const data = parse(raw).get(1);
 
               if (!(data instanceof Uint8Array)) return;
+
+              if (data.length && !signal?.aborted)
+                onOutput?.(descriptor === STDOUT ? "stdout" : "stderr", data);
               const take = Math.min(remaining, data.length);
 
               if (take) chunks.push(data.slice(0, take));
