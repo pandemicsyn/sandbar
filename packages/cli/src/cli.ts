@@ -144,7 +144,15 @@ const execFlags = {
     value: "duration",
     description: "Execution deadline, e.g. 90s or 10m (default 300s)",
   },
-  "max-output": { type: "string", value: "size", description: "Captured output limit, e.g. 1m" },
+  "max-output": {
+    type: "string",
+    value: "size",
+    description: "Captured output limit for buffered and --json output, e.g. 1m",
+  },
+  "no-stream": {
+    type: "boolean",
+    description: "Print the output when the command ends instead of as it arrives",
+  },
 } satisfies Record<string, FlagSpec>;
 
 const excludeFlag = {
@@ -476,7 +484,7 @@ function schema() {
     exitCodes,
     output: {
       json: "With --json, stdout holds exactly one document: {ok:true,data} or {ok:false,error:{code,message,retryable,outcome,hint?,known?,details?}}",
-      exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}, and run adds sandbox {name,id,kept}",
+      exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}, and run adds sandbox {name,id,kept}. Without --json, output streams as it arrives where the provider supports it",
     },
   };
 }
