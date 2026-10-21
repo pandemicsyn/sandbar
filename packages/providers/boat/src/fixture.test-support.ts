@@ -25,6 +25,17 @@ type FixtureSandbox = {
   stop?: { id: string; status: string };
 };
 
+type FixtureSnapshot = {
+  name: string;
+  status: "saving" | "ready" | "failed";
+  sourceSandboxId: string;
+  snapshotId?: string;
+  type: string;
+  account: string;
+  polls: number;
+  files: Map<string, Uint8Array>;
+};
+
 type Call = { method: string; path: string; headers: Headers; body?: Json };
 
 /** Request fields this fixture reads; the recorded call keeps the full JSON body. */
@@ -40,6 +51,8 @@ const Body = z
     encoding: z.string().optional(),
     command: z.string().default(""),
     detached: z.boolean().optional(),
+    sandboxId: z.string().optional(),
+    name: z.string().optional(),
   })
   .default({ path: "", content: "", command: "" });
 
@@ -106,12 +119,40 @@ function view(box: FixtureSandbox) {
   };
 }
 
+/** `GET /named-snapshots/{name}` body; `snapshotId` and `error` appear only when set. */
+type SnapshotView = {
+  name: string;
+  status: string;
+  sourceSandboxId: string;
+  type: string;
+  createdAt: string;
+  snapshotId?: string;
+  error?: string;
+};
+
+function snapshotView(snapshot: FixtureSnapshot) {
+  const view: SnapshotView = {
+    name: snapshot.name,
+    status: snapshot.status,
+    sourceSandboxId: snapshot.sourceSandboxId,
+    type: snapshot.type,
+    createdAt: new Date(0).toISOString(),
+  };
+
+  if (snapshot.snapshotId !== undefined) view.snapshotId = snapshot.snapshotId;
+
+  if (snapshot.status === "failed") view.error = "capture failed";
+
+  return view;
+}
+
 export function boatFixture() {
   const sandboxes = new Map<string, FixtureSandbox>();
+  const snapshots = new Map<string, FixtureSnapshot>();
   const idempotency = new Map<string, { id: string; body: string }>();
   const deletions = new Map<string, { targetId: string; polls: number }>();
   const calls: Call[] = [];
-  const effects = { create: 0, destroy: 0, release: 0 };
+  const effects = { create: 0, destroy: 0, release: 0, save: 0, snapshotDelete: 0 };
   const commands: string[] = [];
   const workdir = mkdtempSync(join(tmpdir(), "sandbar-boat-fixture-"));
   let sequence = 0;
@@ -129,6 +170,10 @@ export function boatFixture() {
   const stopped: number[] = [];
   /** Polls a sandbox needs before it reports `ready`. */
   let provisioningPolls = 1;
+  /** Reads a named snapshot needs before it settles. */
+  let savingPolls = 1;
+  let saveOutcome: "ready" | "failed" = "ready";
+  let loseNextSave = false;
 
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -150,6 +195,79 @@ export function boatFixture() {
     if (method === "GET" && path === "/me")
       return json(200, { ok: true, type: "user", user: { id: account, login: account } });
 
+    if (method === "POST" && path === "/named-snapshots") {
+      const source = sandboxes.get(body.sandboxId ?? "");
+
+      if (!source || source.createdById !== account) return error(404, "sandbox_not_found");
+
+      if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.name ?? "")) return error(400, "invalid_name");
+      effects.save++;
+      const prior = snapshots.get(body.name ?? "");
+
+      const snapshot: FixtureSnapshot = {
+        name: body.name ?? "",
+        status: "saving",
+        sourceSandboxId: source.id,
+        // Saving a name again replaces its artifact only once the new save is ready.
+        snapshotId: prior?.snapshotId,
+        type: source.type,
+        account,
+        polls: 0,
+        files: new Map(source.files),
+      };
+
+      snapshots.set(snapshot.name, snapshot);
+
+      if (loseNextSave) {
+        loseNextSave = false;
+        throw new TypeError("fetch failed");
+      }
+
+      return json(202, {
+        ok: true,
+        type: "named_snapshot",
+        status: "saving",
+        snapshot: snapshotView(snapshot),
+      });
+    }
+
+    if (method === "GET" && path === "/named-snapshots")
+      return json(200, {
+        ok: true,
+        type: "named_snapshot.list",
+        snapshots: [...snapshots.values()].flatMap((snapshot) =>
+          snapshot.account === account ? [snapshotView(snapshot)] : [],
+        ),
+      });
+
+    const named = /^\/named-snapshots\/([^/]+)$/.exec(path);
+
+    if (named) {
+      const name = decodeURIComponent(named[1] ?? "");
+      const snapshot = snapshots.get(name);
+
+      if (!snapshot || snapshot.account !== account) return error(404, "snapshot_not_found");
+
+      if (method === "GET") {
+        snapshot.polls++;
+
+        if (snapshot.status === "saving" && snapshot.polls >= savingPolls) {
+          snapshot.status = saveOutcome;
+
+          if (saveOutcome === "ready") snapshot.snapshotId = `snap_${++sequence}`;
+        }
+
+        return json(200, { ok: true, type: "named_snapshot", snapshot: snapshotView(snapshot) });
+      }
+
+      if (method === "DELETE") {
+        effects.snapshotDelete++;
+        snapshots.delete(name);
+
+        return json(200, { ok: true, type: "named_snapshot.deleted", name, status: "deleted" });
+      }
+    }
+
     if (method === "POST" && path === "/sandboxes") {
       const key = headers.get("idempotency-key") ?? "";
       const sent = JSON.stringify(raw ?? {});
@@ -158,20 +276,25 @@ export function boatFixture() {
       if (prior && prior.body !== sent) return error(409, "idempotency_key_reused");
       let box = prior ? sandboxes.get(prior.id) : undefined;
 
+      const from = body.from === undefined ? undefined : snapshots.get(body.from);
+
+      if (body.from?.startsWith("sandbar-snapshot-") && (!from || from.status !== "ready"))
+        return error(404, "snapshot_not_found");
+
       if (!box) {
         effects.create++;
         box = {
           id: `bx_${++sequence}`,
           name: `sandbox-${sequence}`,
           state: "provisioning",
-          type: body.type ?? "default",
+          type: body.type ?? from?.type ?? "default",
           ttlSeconds: body.ttlSeconds ?? 3600,
           createdById: account,
           from: body.from,
           noEnv: body.noEnv,
           environment: body.environment,
           polls: 0,
-          files: new Map(),
+          files: new Map(from?.files),
         };
         sandboxes.set(box.id, box);
 
@@ -457,11 +580,28 @@ export function boatFixture() {
     effects,
     commands,
     sandboxes,
+    snapshots,
     workdir,
     count: (method: string, pattern: RegExp) =>
       calls.filter((call) => call.method === method && pattern.test(call.path)).length,
     setProvisioningPolls(value: number) {
       provisioningPolls = value;
+    },
+    setSavingPolls(value: number) {
+      savingPolls = value;
+    },
+    failSaves() {
+      saveOutcome = "failed";
+    },
+    loseNextSaveResponse() {
+      loseNextSave = true;
+    },
+    /** Save a name again outside Sandbar: its artifact changes. */
+    resaveSnapshot(name: string) {
+      const snapshot = snapshots.get(name);
+
+      if (!snapshot) throw new Error(`No snapshot ${name}`);
+      snapshot.snapshotId = `snap_${++sequence}`;
     },
     attaches,
     attachQueries,
