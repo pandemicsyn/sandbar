@@ -1825,6 +1825,7 @@ describe("streaming exec output", () => {
       profiles: {
         streaming: { module: fixture, export: "streaming" },
         hanging: { module: fixture, export: "hanging" },
+        "hanging-text": { module: fixture, export: "hangingText" },
       },
     });
   });
@@ -1899,6 +1900,28 @@ describe("streaming exec output", () => {
     expect(result.code).toBe(125);
     expect(result.stdout).toBe("listening\n");
     expect(result.stderr).toContain("ran past --timeout 1s; termination was requested");
+    expect(await terminated()).toEqual(["terminate"]);
+  });
+
+  test("a provider that streams only text still streams", async () => {
+    await cli([
+      "create",
+      "--name",
+      "box",
+      "--prepared",
+      "fake-starter",
+      "--profile",
+      "hanging-text",
+    ]);
+    await seedExec(["serve"], 0, "listening ✓\n", "warming up\n");
+
+    const result = await cli(["exec", "box", "--timeout", "1s", "--", "serve"], {
+      SANDBAR_FAKE_TERMINATIONS: terminations,
+    });
+
+    expect(result.code).toBe(125);
+    expect(result.stdout).toBe("listening ✓\n");
+    expect(result.stderr).toStartWith("warming up\n");
     expect(await terminated()).toEqual(["terminate"]);
   });
 

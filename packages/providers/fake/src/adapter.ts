@@ -123,8 +123,9 @@ export function createFakeAdapter(options: {
   /**
    * Stream seeded exec fixtures as sustained byte processes. The output arrives at start; the
    * process then stays running for `holdMs` (default 0) unless it is terminated, which exits 143.
+   * `textOnly` streams decoded text without declaring byte output, like Boat or Runloop.
    */
-  processes?: { holdMs?: number };
+  processes?: { holdMs?: number; textOnly?: boolean };
 }) {
   return defineAdapter({
     name: "fake",
@@ -351,7 +352,10 @@ export function createFakeAdapter(options: {
       };
 
       const processes = options.processes && {
-        supports: { sustainedOutput: true as const, binaryOutput: true as const },
+        supports: {
+          sustainedOutput: true as const,
+          binaryOutput: options.processes.textOnly ? undefined : (true as const),
+        },
         async start(input: ProcessStartInput, ctx: ProcessStartContext): Promise<NativeProcess> {
           const submissionId = crypto.randomUUID();
 
@@ -402,7 +406,11 @@ export function createFakeAdapter(options: {
           ] as const) {
             const chunk = bytes(encoded);
 
-            if (chunk.byteLength) ctx.onOutputBytes?.({ stream, bytes: chunk });
+            if (!chunk.byteLength) continue;
+
+            if (options.processes?.textOnly)
+              ctx.onOutput({ stream, text: new TextDecoder().decode(chunk) });
+            else ctx.onOutputBytes?.({ stream, bytes: chunk });
           }
 
           return {
