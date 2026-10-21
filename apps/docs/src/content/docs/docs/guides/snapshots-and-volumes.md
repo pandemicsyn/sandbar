@@ -62,9 +62,10 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 | ----------------- | ----------------------------------------- | ----------------------------------------- | ------------------------------------------------ |
 | Daytona container | Private filesystem                        | Stop, capture, then restart               | Fresh processes; RAM is not retained             |
 | E2B               | Private filesystem, RAM and process state | Pause and resume; active connections drop | Resume captured processes in independent compute |
+| Modal             | Private root filesystem                   | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
 | boxd              | Private disk, RAM and process state       | Brief pause; keeps running                | Resume captured processes in a new machine       |
 
-Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option.
+Daytona leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. VM capture is unsupported. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
 
 ```ts
 const captured = await source.snapshot({
@@ -157,7 +158,7 @@ The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/
 
 | Workflow                               | Current support                                                                                                      |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Capture and restore private state      | Daytona filesystem capture; E2B and boxd filesystem and memory capture. Vercel snapshots are unsupported.            |
+| Capture and restore private state      | Daytona, Vercel (disposable mode), Runloop and Modal filesystem capture; E2B and boxd filesystem and memory capture. |
 | Capture a sandbox with external mounts | Unsupported by the Daytona, E2B and boxd adapters.                                                                   |
 | Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.  |
 | Override restore resource sizes        | Unsupported by Daytona, E2B and boxd; empty overrides are treated as omitted.                                        |

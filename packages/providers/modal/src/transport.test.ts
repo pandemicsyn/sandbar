@@ -432,7 +432,9 @@ test.each([
 
     // An image build is rejected by the same statuses; a read-only lookup by any failure.
     expect(createRejection(failure, "build", [])?.code).toBe(expected);
+    expect(createRejection(failure, "snapshot", [])?.code).toBe(expected);
     expect(createRejection(failure, "lookup", [])?.code).toBe(expected ?? "UNAVAILABLE");
+    expect(createRejection(failure, "source", [])?.code).toBe(expected ?? "UNAVAILABLE");
     client.close();
   } finally {
     createFailure = undefined;
@@ -442,7 +444,7 @@ test.each([
   }
 });
 
-test("image lookup failures reject; unclassified build and sandbox failures stay uncertain", () => {
+test("lookup failures reject; unclassified build, sandbox and snapshot failures stay uncertain", () => {
   expect(createRejection(new NotFoundError("Image im-x not found"), "lookup", [])).toMatchObject({
     code: "NOT_FOUND",
     message: "Modal rejected image lookup: Image im-x not found",
@@ -450,6 +452,11 @@ test("image lookup failures reject; unclassified build and sandbox failures stay
   expect(createRejection(new Error("lost response"), "lookup", [])?.code).toBe("UNAVAILABLE");
   expect(createRejection(new Error("Image build for im-x failed"), "build", [])).toBeUndefined();
   expect(createRejection(new Error("lost response"), "sandbox", [])).toBeUndefined();
+  expect(createRejection(new Error("lost response"), "snapshot", [])).toBeUndefined();
+  expect(createRejection(new NotFoundError("Sandbox sb-x not found"), "source", [])).toMatchObject({
+    code: "NOT_FOUND",
+    message: "Modal rejected source sandbox lookup: Sandbox sb-x not found",
+  });
 
   const oversized = Object.assign(new Error("oversized"), {
     name: "ClientError",
