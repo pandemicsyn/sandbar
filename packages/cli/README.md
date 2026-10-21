@@ -11,6 +11,8 @@ export SANDBAR_PROVIDER=e2b E2B_API_KEY=...
 sandbar create --name web
 sandbar exec web -- uname -a
 sandbar cp ./app.py web:/work/app.py
+sandbar push web                            # this folder's git files, to ~/work
+sandbar cp -r web:/home/user/work/dist ./dist
 sandbar rm web
 
 sandbar run -- python3 -c 'print(2 + 2)'   # create, run, always destroy
@@ -31,7 +33,8 @@ Install the adapter for each provider with `sandbar adapter add e2b` (or `dayton
 | `run [create and exec flags] [--keep] -- cmd...` | Create, run one command, destroy |
 | `image build <oci-ref> [--name] [--refresh]` | Build an OCI image on a provider that needs a build first, and record it |
 | `image ls [--remote]`, `image inspect <name>`, `image rm <name> [--force]`, `image forget <name>` | List, show, delete or drop image records; `ls --remote` lists the provider's images, `rm` deletes a built image on the provider (only builds this CLI created unless `--force`), `forget` only drops the record |
-| `cp <src> <dst>` | Copy one file; one side is `<sandbox>:/path` |
+| `cp [-r] [--exclude <glob>] <src> <dst>` | Copy a file, or a directory with `-r`; one side is `<sandbox>:/path` |
+| `push <sandbox>[:/dir] [path]` | Send a local folder's git-tracked and unignored files (default `.` to `~/work`); `run --push <path>` does the same before its command |
 | `cat <sandbox>:/path` | Print a file |
 | `doctor` | Check config, credentials and the connection; creates nothing |
 | `adapter add <provider\|package>[@version]...`, `adapter ls`, `adapter rm <provider\|package>...` | Install, list or remove adapters in `~/.config/sandbar/adapters` |
@@ -136,7 +139,7 @@ Sandbox references are kept as one JSON file per sandbox in `~/.config/sandbar/s
 
 ## Not yet
 
-Planned for later steps: `--lifetime`/`--idle`/`--port` create flags, recursive `cp`, detached processes and logs, preview URLs, suspend/resume/renew, `gc`, snapshots and volumes, `sandbar adapter add`, an S3-compatible store, KeePassXC and system-keyring references, and MCP mode.
+Planned for later steps: `--lifetime`/`--idle`/`--port` create flags, detached processes and logs, preview URLs, suspend/resume/renew, `gc`, snapshots and volumes, `sandbar adapter add`, an S3-compatible store, KeePassXC and system-keyring references, and MCP mode.
 
 ## Development
 

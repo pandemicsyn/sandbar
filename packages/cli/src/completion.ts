@@ -23,7 +23,7 @@ type Candidate = { value: string; description?: string };
 
 type Completion = { candidates: Candidate[]; directive: number };
 
-const fileFlags = new Set(["config", "state-dir", "stdin-file", "env-file"]);
+const fileFlags = new Set(["config", "state-dir", "stdin-file", "env-file", "push"]);
 
 /** Commands whose positional arguments name sandboxes, and how many. */
 const sandboxArguments = new Map([
@@ -131,6 +131,11 @@ export async function complete(
     return positionals.length < limit
       ? { candidates: await sandboxNames(session), directive: 0 }
       : none;
+
+  if (command.name === "push")
+    return positionals.length === 0
+      ? { candidates: await sandboxNames(session), directive: 0 }
+      : { candidates: [], directive: positionals.length === 1 ? Files : 0 };
 
   if (command.name === "cp" || command.name === "cat") {
     // A remote path is typed by hand after `name:`; offer the names, then local files for cp.

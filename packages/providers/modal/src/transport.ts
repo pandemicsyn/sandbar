@@ -142,11 +142,19 @@ export interface ModalTransport {
     stderr: Uint8Array;
     truncated: boolean;
   }>;
+  /**
+   * Capture the sandbox root filesystem as a new Modal image and return its `im-` ID. The image
+   * keeps Modal's default retention (30 days from creation). Throws {@link ModalCreateRejected}
+   * only when the request provably made no image.
+   */
+  snapshotFilesystem(sandboxId: string): Promise<string>;
+  /** Delete an image by ID; `missing` when Modal no longer has it. */
+  deleteImage(imageId: string): Promise<"deleted" | "missing">;
   close(): void;
 }
 
 /**
- * A Modal create failure that provably left no sandbox behind. `imageBuilt` means an
+ * A Modal create or snapshot failure that provably left nothing behind. `imageBuilt` means an
  * OCI image was built first, so the attempt still had a (possibly paid) effect.
  */
 export class ModalCreateRejected extends AdapterError {
@@ -178,8 +186,10 @@ const GrpcClientError = z.object({
 
 const createSteps = {
   lookup: "image lookup",
+  source: "source sandbox lookup",
   build: "image build",
   sandbox: "sandbox creation",
+  snapshot: "filesystem snapshot",
 } as const;
 
 function nativeDetail(text: string, secrets: string[]): string {
@@ -194,9 +204,9 @@ function nativeDetail(text: string, secrets: string[]): string {
 }
 
 /**
- * Classify a create failure by step. The read-only image lookup precedes every
- * effect, so any failure there is a rejection. An image build or sandbox request
- * is rejected only by a definitive server status; otherwise this returns undefined.
+ * Classify a create or snapshot failure by step. The read-only image and source lookups
+ * precede every effect, so any failure there is a rejection. An image build, sandbox request
+ * or snapshot is rejected only by a definitive server status; otherwise this returns undefined.
  */
 export function createRejection(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- thrown native values are classified here.
@@ -205,13 +215,14 @@ export function createRejection(
   secrets: string[],
 ): ModalCreateRejected | undefined {
   const grpc = GrpcClientError.safeParse(error);
+  const lookup = step === "lookup" || step === "source";
 
   if (grpc.success) {
     // grpc-js raises this locally for an oversized response, after the server acted.
     const local = grpc.data.details.startsWith("Received message larger than max");
     const code = local ? undefined : definitiveStatus.get(grpc.data.code);
 
-    if (!code && step !== "lookup") return undefined;
+    if (!code && !lookup) return undefined;
     const detail = nativeDetail(grpc.data.details, secrets);
 
     return new ModalCreateRejected(
@@ -220,7 +231,7 @@ export function createRejection(
     );
   }
 
-  if (step !== "lookup") return undefined;
+  if (!lookup) return undefined;
   const detail = error instanceof Error ? nativeDetail(error.message, secrets) : "";
 
   return new ModalCreateRejected(
@@ -229,7 +240,7 @@ export function createRejection(
       : error instanceof InvalidError
         ? "INVALID_ARGUMENT"
         : "UNAVAILABLE",
-    `Modal rejected ${createSteps.lookup}${detail ? `: ${detail}` : ""}`,
+    `Modal rejected ${createSteps[step]}${detail ? `: ${detail}` : ""}`,
   );
 }
 
@@ -412,6 +423,36 @@ export function createSdkTransport(input: {
         return true;
       } catch (error) {
         if (error instanceof SandboxFilesystemNotFoundError) return false;
+        throw error;
+      }
+    },
+    async snapshotFilesystem(sandboxId) {
+      const secrets = [input.tokenId, input.tokenSecret];
+      let sandbox: Sandbox;
+
+      try {
+        sandbox = await client.sandboxes.fromId(sandboxId);
+      } catch (error) {
+        throw createRejection(error, "source", secrets) ?? error;
+      }
+
+      // Modal 0.10.1 sends one TaskSnapshotFilesystem request with a fresh snapshot ID and
+      // resends that same request only after DEADLINE_EXCEEDED or CANCELLED.
+      try {
+        const image = await sandbox.snapshotFilesystem();
+
+        return image.imageId;
+      } catch (error) {
+        throw createRejection(error, "snapshot", secrets) ?? error;
+      }
+    },
+    async deleteImage(imageId) {
+      try {
+        await client.images.delete(imageId);
+
+        return "deleted";
+      } catch (error) {
+        if (error instanceof NotFoundError) return "missing";
         throw error;
       }
     },

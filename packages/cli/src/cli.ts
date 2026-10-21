@@ -11,6 +11,7 @@ import {
   inspectCommand,
   lsCommand,
   providersCommand,
+  pushCommand,
   rmCommand,
   runCommand,
   shCommand,
@@ -146,6 +147,21 @@ const execFlags = {
   "max-output": { type: "string", value: "size", description: "Captured output limit, e.g. 1m" },
 } satisfies Record<string, FlagSpec>;
 
+const excludeFlag = {
+  type: "string",
+  multiple: true,
+  value: "glob",
+  description: "Skip matching paths (repeatable; a pattern without / matches any name)",
+} satisfies FlagSpec;
+
+const pushFlags = {
+  exclude: excludeFlag,
+  "include-ignored": {
+    type: "boolean",
+    description: "Send every file, not only git-tracked and unignored ones",
+  },
+} satisfies Record<string, FlagSpec>;
+
 export const commands: readonly CommandSpec[] = [
   {
     name: "create",
@@ -252,17 +268,25 @@ export const commands: readonly CommandSpec[] = [
   {
     name: "run",
     summary: "Create a sandbox, run one command, and always destroy it",
-    usage: "sandbar run [create flags] [exec flags] [--keep] -- <command> [args...]",
+    usage:
+      "sandbar run [create flags] [exec flags] [--keep] [--push <path>] -- <command> [args...]",
     flags: {
       ...createFlags,
       ...execFlags,
       keep: { type: "boolean", description: "Keep the sandbox and print its name on stderr" },
+      push: {
+        type: "string",
+        value: "path",
+        description: "Send a local folder to ~/work first and run the command there",
+      },
+      ...pushFlags,
     },
     passthrough: true,
     remoteExit: true,
     examples: [
       "sandbar run -- python3 -c 'print(2 + 2)'",
       "sandbar run --network internet -- curl -sI https://example.com",
+      "sandbar run --push . --timeout 15m -- sh -c 'npm ci && npm test'",
     ],
     run: runCommand,
   },
@@ -301,23 +325,43 @@ export const commands: readonly CommandSpec[] = [
   },
   {
     name: "cp",
-    summary: "Copy one file to or from a sandbox",
-    usage: "sandbar cp <src> <dst>   (one side is <sandbox>:/path)",
+    summary: "Copy files or directories to or from a sandbox",
+    usage: "sandbar cp [-r] <src> <dst>   (one side is <sandbox>:/path)",
     flags: {
       "no-clobber": {
         type: "boolean",
-        description: "Fail instead of overwriting a file in the sandbox",
+        description: "Fail instead of overwriting an existing file",
       },
       recursive: {
         type: "boolean",
         short: "r",
-        description: "Copy directories (not available yet)",
+        description: "Copy directories as one tar archive (needs tar in the sandbox)",
       },
+      exclude: excludeFlag,
     },
     passthrough: false,
     remoteExit: false,
-    examples: ["sandbar cp ./app.py web:/work/app.py", "sandbar cp web:/work/out.json ./out.json"],
+    examples: [
+      "sandbar cp ./app.py web:/work/app.py",
+      "sandbar cp web:/work/out.json ./out.json",
+      "sandbar cp -r ./src web:/work --exclude node_modules",
+      "sandbar cp -r web:/work/coverage ./coverage",
+    ],
     run: cpCommand,
+  },
+  {
+    name: "push",
+    summary: "Send a local folder's git-tracked and unignored files into a sandbox",
+    usage: "sandbar push <sandbox>[:/dir] [path]   (default: . to ~/work in the sandbox)",
+    flags: pushFlags,
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "sandbar push ci",
+      "sandbar push ci:/srv/app ./app --exclude '*.log'",
+      "sandbar exec ci --cwd /srv/app -- npm test",
+    ],
+    run: pushCommand,
   },
   {
     name: "cat",
