@@ -529,3 +529,31 @@ test("local deadline permits later original-ID recovery; exit alone cannot hide 
     wire.close();
   }
 });
+
+test("live output forwards every chunk while the capture stays bounded; no timeout means no field 6", async () => {
+  starts = 0;
+  stdinWrites = 0;
+  seen.length = 0;
+  const wire = router();
+
+  try {
+    await wire.start({ sandboxId: "sb-fixture", execId: "submission-1", command: ["make"] });
+    expect(parse(seen[0]!).has(6)).toBe(false);
+    await wire.stdinWrite("sb-fixture", "submission-1", 4, Uint8Array.from([9]));
+    await wire.stdinWrite("sb-fixture", "submission-1", 5, "eof");
+    expect(parse(seen[1]!).get(3)).toBe(4);
+    expect(parse(seen[2]!).get(3)).toBe(5);
+    expect(parse(seen[2]!).get(5)).toBe(1);
+    const live: string[] = [];
+
+    const result = await wire.result("sb-fixture", "submission-1", 1, undefined, (stream, bytes) =>
+      live.push(`${stream}:${[...bytes].join(",")}`),
+    );
+
+    expect([...live].sort()).toEqual(["stderr:42", "stdout:0,255,129"]);
+    expect(result.stdout).toEqual(Uint8Array.from([0]));
+    expect(result.truncated).toBe(true);
+  } finally {
+    wire.close();
+  }
+});
