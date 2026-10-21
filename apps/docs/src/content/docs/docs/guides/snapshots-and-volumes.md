@@ -65,12 +65,25 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 | Modal             | Private root filesystem                   | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
 | boxd              | Private disk, RAM and process state       | Brief pause; keeps running                | Resume captured processes in a new machine       |
 
-Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer and has no filesystem-only capture option. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
+Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
 
 ```ts
 const captured = await source.snapshot({
   requirements: { preserve: "filesystem+memory", maxInterruption: "pause" },
 }); // E2B can satisfy this; Daytona rejects before stopping compute.
+```
+
+Where a provider offers both, choose what capture keeps once, in adapter setup, with the exported `Preserve` constants. The choice is exact: E2B's `Preserve.FILESYSTEM` skips memory, and restored sandboxes boot fresh. Omit it to keep the provider's default. A choice the adapter cannot honor rejects before any sandbox changes.
+
+```ts
+import { Preserve } from "sandbar-sdk";
+import { e2b } from "@sandbar-sdk/e2b";
+
+const adapter = e2b({
+  apiKey: process.env.E2B_API_KEY!,
+  snapshots: { preserve: Preserve.FILESYSTEM },
+  lifecycle: { suspension: { preserve: Preserve.FILESYSTEM } },
+});
 ```
 
 Pause application writers before capture if you need consistent data. Passing `consistency: "caller-quiesced"` records that you did so; Sandbar does not pause writers for you. Otherwise, consistency remains unknown unless the provider supplies evidence. `captured.capture` describes what was saved, and `captured.source` describes the source after capture.

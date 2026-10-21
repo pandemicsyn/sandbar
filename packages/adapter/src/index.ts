@@ -367,7 +367,7 @@ export type AdapterSession<
     ctx: ReadContext,
   ) => Promise<
     Support<{
-      preserve: "filesystem" | "filesystem+memory";
+      preserve: import("./state").Preserve;
       processes: "terminated" | "preserved";
       connections: "dropped" | "preserved";
     }>

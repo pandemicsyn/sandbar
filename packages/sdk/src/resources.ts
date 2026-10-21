@@ -433,14 +433,10 @@ export function resourceManagers(client: AdapterDirectClient) {
 
       return new AdapterSnapshot(client, info.reference);
     },
-    async list(input: InventoryInput) {
+    async list(input: SandboxListInput = {}) {
       client.ensureOpen();
 
-      const request = validateResourceInput(
-        InventoryInput,
-        input,
-        "Invalid snapshot inventory request",
-      );
+      const request = validateResourceInput(PageInput, input, "Invalid snapshot inventory request");
 
       if (!client.session.snapshotList)
         throw new SandbarError("UNSUPPORTED", "Snapshot inventory is unsupported");
@@ -492,14 +488,10 @@ export function resourceManagers(client: AdapterDirectClient) {
     async create(input: VolumeCreateInput, options: WaitOptions = {}): Promise<VolumeHandle> {
       return (await volumes.submitCreate(input, options)).wait(options);
     },
-    async list(input: InventoryInput) {
+    async list(input: SandboxListInput = {}) {
       client.ensureOpen();
 
-      const request = validateResourceInput(
-        InventoryInput,
-        input,
-        "Invalid volume inventory request",
-      );
+      const request = validateResourceInput(PageInput, input, "Invalid volume inventory request");
 
       if (!client.session.volumeList)
         throw new SandbarError("UNSUPPORTED", "Volume inventory is unsupported");
@@ -533,14 +525,10 @@ export function resourceManagers(client: AdapterDirectClient) {
 
       return new AdapterImage(client, info.reference);
     },
-    async list(input: InventoryInput) {
+    async list(input: SandboxListInput = {}) {
       client.ensureOpen();
 
-      const request = validateResourceInput(
-        InventoryInput,
-        input,
-        "Invalid image inventory request",
-      );
+      const request = validateResourceInput(PageInput, input, "Invalid image inventory request");
 
       if (!client.session.imageList)
         throw new UnsupportedFeatureError("image inventory", [
@@ -574,10 +562,15 @@ export function resourceManagers(client: AdapterDirectClient) {
   return { snapshots, volumes, images };
 }
 
-/** Page size used by `sandboxes.list()` when `limit` is omitted. */
+/** Page size used by `list()` calls when `limit` is omitted. */
 export const DEFAULT_SANDBOX_LIST_LIMIT = 50;
 
-/** Optional page selection for `sandboxes.list()`; `limit` is 1-100 and defaults to 50. */
+/** Inventory page selection with the default page size applied. */
+const PageInput = InventoryInput.extend({
+  limit: InventoryInput.shape.limit.default(DEFAULT_SANDBOX_LIST_LIMIT),
+});
+
+/** Optional page selection for `list()` calls; `limit` is 1-100 and defaults to 50. */
 export type SandboxListInput = { cursor?: string; limit?: number };
 
 /** One listed sandbox; `reference` is null when the adapter cannot verify a reopenable identity. */

@@ -71,6 +71,7 @@ Import from `sandbar-sdk`.
 | `outputText`                  | re-export |
 | `PreparedAdapterAttempt`      | re-export |
 | `PreparedImage`               | type      |
+| `Preserve`                    | re-export |
 | `Preview`                     | type      |
 | `ProcessChunk`                | type      |
 | `ProcessExit`                 | type      |

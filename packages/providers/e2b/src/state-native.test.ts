@@ -13,6 +13,7 @@ import {
   SandbarError,
   Image,
   OutcomeUnknownError,
+  Preserve,
   WaitAbortedError,
   type AdapterRecoveryReference,
 } from "sandbar-sdk";
@@ -23,6 +24,12 @@ import {
   type E2BTransport,
   type E2BRecord,
 } from "./transport";
+
+type FixtureConfig = {
+  teamId?: string;
+  snapshots?: { preserve: Preserve };
+  preview: { access: "protected" | "public" };
+};
 
 function fixture() {
   const boxes = new Map<string, E2BRecord>();
@@ -39,6 +46,8 @@ function fixture() {
   let getBarrier: (() => Promise<void>) | undefined;
   let deleteReadStage: "template" | "address" | "dependencies" | "volume" | undefined;
   let deleteReadBarrier: (() => Promise<void>) | undefined;
+
+  const captureMemory: (boolean | undefined)[] = [];
 
   const calls = {
     create: 0,
@@ -193,8 +202,9 @@ function fixture() {
           ...(retainedGeneration ? [{ tag: "captured", buildId: retainedGeneration }] : []),
         ];
       },
-      async capture(_id, name) {
+      async capture(_id, name, _signal, memory) {
         calls.capture++;
+        captureMemory.push(memory);
         expect(name).toBeUndefined();
         const snapshot = { snapshotId: "snap_one:default", names: [] };
         snapshots.set(snapshot.snapshotId, snapshot);
@@ -261,13 +271,21 @@ function fixture() {
     onReference?: (ref: AdapterRecoveryReference) => void,
     teamId?: string,
     access: "protected" | "public" = "protected",
-  ) =>
-    Sandbar.connect({
+    snapshots?: { preserve: Preserve },
+  ) => {
+    const config: FixtureConfig = { preview: { access } };
+
+    if (teamId) config.teamId = teamId;
+
+    if (snapshots) config.snapshots = snapshots;
+
+    return Sandbar.connect({
       adapter: createE2BAdapter(() => transport),
-      config: teamId ? { teamId, preview: { access } } : { preview: { access } },
+      config,
       credentials: { apiKey },
       onReference,
     });
+  };
 
   return {
     connect,
@@ -276,6 +294,7 @@ function fixture() {
     snapshots,
     volumes,
     calls,
+    captureMemory,
     modes,
     createRequests,
     moveDefault() {
@@ -345,6 +364,72 @@ test("E2B captures, restores the saved UUID after source deletion, and rejects a
   } finally {
     await reopened.close();
   }
+});
+
+test("E2B filesystem-only capture sends memory: false and its history outlives the configuration", async () => {
+  const f = fixture();
+
+  const client = await f.connect("fixture-key", undefined, undefined, "protected", {
+    preserve: Preserve.FILESYSTEM,
+  });
+
+  const source = await client.sandboxes.create({ environment: Image.prepared("base") });
+  const check = await source.checkSnapshot();
+  expect(check).toMatchObject({
+    status: "supported",
+    value: { profile: { preserve: "filesystem", restoreExecution: "fresh" } },
+  });
+  // An exact requirement for memory cannot be met by the configured filesystem-only capture.
+  await expect(
+    source.snapshot({ requirements: { preserve: Preserve.FILESYSTEM_AND_MEMORY } }),
+  ).rejects.toMatchObject({ effect: "none" });
+  expect(f.calls.capture).toBe(0);
+
+  const result = await source.snapshot();
+  expect(result.capture).toMatchObject({ preserve: "filesystem", restoreExecution: "fresh" });
+  expect(result.source.connections).toBe("unknown");
+  expect(f.captureMemory).toEqual([false]);
+  const saved = JSON.parse(JSON.stringify(result.snapshot.reference));
+  await source.destroy();
+  await client.close();
+
+  // Reopening with the default (memory) configuration still reports what was captured.
+  const reopened = await f.connect();
+
+  try {
+    const info = await (await reopened.snapshots.get(saved)).inspect();
+    expect(info).toMatchObject({ preserve: "filesystem", restoreExecution: "fresh" });
+    const memorySource = await reopened.sandboxes.create({ environment: Image.prepared("base") });
+    expect((await memorySource.snapshot()).capture.preserve).toBe("filesystem+memory");
+    expect(f.captureMemory).toEqual([false, true]);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("E2B filesystem-only capture posts memory: false directly", async () => {
+  const requests: { url: string; body: unknown }[] = [];
+
+  const fetcher = Object.assign(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+
+      return Response.json(
+        { snapshotID: "snap_fs:default", names: ["team/snap_fs:default"] },
+        { status: 201 },
+      );
+    },
+    { preconnect() {} },
+  );
+
+  const transport = createSdkTransport("fixture-key", fetcher);
+  await expect(transport.state!.capture("sbx_1", undefined, undefined, false)).resolves.toEqual({
+    snapshotId: "snap_fs:default",
+    names: ["team/snap_fs:default"],
+  });
+  expect(requests).toEqual([
+    { url: "https://api.e2b.app/sandboxes/sbx_1/snapshots", body: { memory: false } },
+  ]);
 });
 
 test("E2B lost capture acknowledgement is observed without a second capture or guessed ownership", async () => {

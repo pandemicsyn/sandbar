@@ -15,6 +15,8 @@ import {
   assertResourceScope,
   unknownSandboxFacts,
   ResourceMinimums,
+  Preserve,
+  PreserveSchema,
   type Fact,
   type SandboxResources,
   nativeDeadline,
@@ -86,12 +88,13 @@ const Configuration = z
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("public") })
       .default({ access: "public" }),
+    /** What `snapshot()` keeps: filesystem and memory (default) or filesystem only. */
+    snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
     lifecycle: z
       .strictObject({
         lifetimeSeconds: z.number().int().positive().safe().max(MAX_LIFETIME_SECONDS).optional(),
-        suspension: z
-          .strictObject({ preserve: z.enum(["filesystem", "filesystem+memory"]) })
-          .optional(),
+        /** What `suspend()` keeps: filesystem and memory (default) or filesystem only. */
+        suspension: z.strictObject({ preserve: PreserveSchema }).optional(),
       })
       .optional(),
   })
@@ -148,8 +151,8 @@ function recordSize(record: E2BRecord): Fact<SandboxResources> {
 
 const SuspendToken = z.strictObject({
   acknowledged: z.literal(true),
-  preserve: z.literal("filesystem+memory"),
-  processes: z.literal("preserved"),
+  preserve: PreserveSchema,
+  processes: z.enum(["preserved", "terminated"]),
   connections: z.literal("dropped"),
   completed: SuspendResult.omit({ reference: true })
     .extend({ observation: CompactObservation })
@@ -330,6 +333,19 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           "Configured suspension requires mapped E2B lifecycle transport",
         );
       host.onClose(() => transport.close());
+
+      const suspendPreserve =
+        config.lifecycle?.suspension?.preserve ?? Preserve.FILESYSTEM_AND_MEMORY;
+
+      // A filesystem-only pause ends processes; resume cold-boots from the saved disk.
+      const suspendFacts = {
+        preserve: suspendPreserve,
+        processes:
+          suspendPreserve === Preserve.FILESYSTEM
+            ? ("terminated" as const)
+            : ("preserved" as const),
+        memory: suspendPreserve === Preserve.FILESYSTEM_AND_MEMORY,
+      };
 
       const verifyAuthority = () =>
         config.teamId ? transport.verifyTeam(config.teamId) : transport.verifyAuth();
@@ -596,6 +612,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         transport,
         scopeMarker,
         timeoutSeconds: config.timeoutSeconds,
+        snapshotPreserve: config.snapshots?.preserve ?? Preserve.FILESYSTEM_AND_MEMORY,
         apiKey: credentials.apiKey,
         allowPublicTraffic: config.preview.access === "public",
         find,
@@ -1336,8 +1353,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           return {
             status: "supported" as const,
             value: {
-              preserve: "filesystem+memory" as const,
-              processes: "preserved" as const,
+              preserve: suspendFacts.preserve,
+              processes: suspendFacts.processes,
               connections: "dropped" as const,
             },
           };
@@ -1401,7 +1418,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
                 return ResolvedLifecycleInput.parse({
                   ...input,
-                  intent: { action: "suspend", preserve: "filesystem+memory" },
+                  intent: { action: "suspend", preserve: suspendFacts.preserve },
                 });
               },
               async submit(input, ctx) {
@@ -1409,7 +1426,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   return ctx.reject("UNAVAILABLE", "Lifecycle cancelled before dispatch");
 
                 try {
-                  await transport.suspend!(input.sandbox.id, ctx.signal);
+                  await transport.suspend!(input.sandbox.id, ctx.signal, suspendFacts.memory);
                 } catch (error) {
                   if (error instanceof E2BLifecycleRejected)
                     return ctx.reject(error.code, error.message);
@@ -1426,8 +1443,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 try {
                   await ctx.checkpoint({
                     acknowledged: true,
-                    preserve: "filesystem+memory",
-                    processes: "preserved",
+                    preserve: suspendFacts.preserve,
+                    processes: suspendFacts.processes,
                     connections: "dropped",
                   });
                 } catch {
@@ -1440,8 +1457,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 if (observation && observation.state === "suspended") {
                   const completed = {
                     reference: input.sandbox.reference,
-                    preserve: "filesystem+memory" as const,
-                    processes: "preserved" as const,
+                    preserve: suspendFacts.preserve,
+                    processes: suspendFacts.processes,
                     connections: "dropped" as const,
                     observation,
                   };
@@ -1450,8 +1467,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     await ctx.checkpoint(
                       z.json().parse({
                         acknowledged: true,
-                        preserve: "filesystem+memory",
-                        processes: "preserved",
+                        preserve: suspendFacts.preserve,
+                        processes: suspendFacts.processes,
                         connections: "dropped",
                         completed: compactCompletion(completed),
                       }),
@@ -1474,8 +1491,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 return ctx.pending(
                   {
                     acknowledged: true,
-                    preserve: "filesystem+memory",
-                    processes: "preserved",
+                    preserve: suspendFacts.preserve,
+                    processes: suspendFacts.processes,
                     connections: "dropped",
                   },
                   { pollAfterMs: 100 },
@@ -1508,13 +1525,13 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                   return ctx.pending(
                     z.json().parse({
                       acknowledged: true,
-                      preserve: "filesystem+memory",
-                      processes: "preserved",
+                      preserve: token.data.preserve,
+                      processes: token.data.processes,
                       connections: "dropped",
                       completed: compactCompletion({
                         reference: input.sandbox.reference,
-                        preserve: "filesystem+memory" as const,
-                        processes: "preserved" as const,
+                        preserve: token.data.preserve,
+                        processes: token.data.processes,
                         connections: "dropped" as const,
                         observation,
                       }),
@@ -1525,8 +1542,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 return ctx.pending(
                   {
                     acknowledged: true,
-                    preserve: "filesystem+memory",
-                    processes: "preserved",
+                    preserve: token.data.preserve,
+                    processes: token.data.processes,
                     connections: "dropped",
                   },
                   { pollAfterMs: 100 },
@@ -1564,6 +1581,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     input.sandbox.id,
                     input.intent.action === "resume" ? input.intent.forSeconds! : 0,
                     ctx.signal,
+                    suspendFacts.memory,
                   );
                 } catch (error) {
                   if (error instanceof E2BLifecycleRejected)
@@ -1593,7 +1611,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 if (observation && observation.state === "running") {
                   const completed = {
                     reference: input.sandbox.reference,
-                    execution: "unknown" as const,
+                    // A disk-only resume always cold-boots; a memory resume may not restore.
+                    execution: suspendFacts.memory ? ("unknown" as const) : ("fresh" as const),
                     executionIdentity: unknownSandboxFacts().execution,
                     connections: "dropped" as const,
                     observation,

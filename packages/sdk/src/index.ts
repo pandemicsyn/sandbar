@@ -84,6 +84,7 @@ export {
   assertResourceIdentity,
   SnapshotRequest,
   SnapshotRequirements,
+  Preserve,
 } from "@sandbar-sdk/adapter";
 
 export type {
