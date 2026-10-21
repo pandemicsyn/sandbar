@@ -7,9 +7,11 @@ export function daytona(options: {
   apiKey: string;
   target: string;
   environment?: ImageInput;
+  /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
   ttlMinutes?: number;
   preview?: { access: "protected" | "public" };
   lifecycle?: {
+    /** Wall-clock lifetime (default 900), rounded up to minutes; `create()` can override it per sandbox. */
     lifetimeSeconds?: number;
     /** Stop the sandbox after this many idle seconds, rounded up to minutes. Omit to keep it running until its lifetime ends. */
     idleSeconds?: number;

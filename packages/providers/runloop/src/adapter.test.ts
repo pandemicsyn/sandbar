@@ -179,6 +179,10 @@ test("create records the attempt, sets lifetime, tunnel and env, and resolves bl
     expect(createBodies(fixture).at(-1)?.body).toMatchObject({ blueprint_id: "bpt_known" });
     await client.sandboxes.create({ environment: Image.prepared("python-tools") });
     expect(createBodies(fixture).at(-1)?.body).toMatchObject({ blueprint_name: "python-tools" });
+    await client.sandboxes.create({ lifecycle: { lifetimeSeconds: 7200 } });
+    expect(createBodies(fixture).at(-1)?.body).toMatchObject({
+      launch_parameters: { keep_alive_time_seconds: 7200 },
+    });
   } finally {
     await client.close();
   }
@@ -208,6 +212,11 @@ test("resources pick the smallest Runloop size; idle windows replace the lifetim
     expect(info.resources).toEqual({ status: "known", value: { vcpus: 4, memoryMiB: 16384 } });
     expect(info.idleStop).toEqual({ status: "known", value: { seconds: 600, action: "suspend" } });
     expect(info.expires).toEqual({ status: "none" });
+    // A per-create lifetime would silently drop the idle window, so it is refused.
+    expect((await client.capabilities()).lifetime).toBeNull();
+    await expect(
+      client.sandboxes.create({ lifecycle: { lifetimeSeconds: 600 } }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
   } finally {
     await client.close();
   }

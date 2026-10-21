@@ -11,6 +11,7 @@ import {
   AdapterCheckpointError,
   AdapterError,
   assertResourceScope,
+  DEFAULT_LIFETIME_SECONDS,
   defineAdapter,
   Preserve,
   PreserveSchema,
@@ -92,11 +93,16 @@ const Configuration = z
     lifecycle: z
       .strictObject({
         /** Auto-archive after this many seconds; renew extends it. */
-        lifetimeSeconds: z.number().int().min(60).max(MAX_TTL_SECONDS).default(900),
+        lifetimeSeconds: z
+          .number()
+          .int()
+          .min(60)
+          .max(MAX_TTL_SECONDS)
+          .default(DEFAULT_LIFETIME_SECONDS),
         /** Boat archives keep the disk only; only `Preserve.FILESYSTEM` is accepted. */
         suspension: z.strictObject({ preserve: PreserveSchema }).optional(),
       })
-      .default({ lifetimeSeconds: 900 }),
+      .default({ lifetimeSeconds: DEFAULT_LIFETIME_SECONDS }),
   })
   .superRefine((value, ctx) => {
     if (value.resources !== undefined && value.machine !== undefined)
@@ -503,12 +509,13 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
       const launch = async (
         source: { image: string } | { snapshot: string },
         ctx: AttemptContext<z.infer<typeof CreateToken>>,
+        lifetimeSeconds = config.lifecycle.lifetimeSeconds,
       ) => {
         const partial = "snapshot" in source ? partialRestore : partialCreate;
         let id: string;
 
         try {
-          const request: CreateSandboxRequest = { ttlSeconds: config.lifecycle.lifetimeSeconds };
+          const request: CreateSandboxRequest = { ttlSeconds: lifetimeSeconds };
 
           // A restore omits the type so Boat keeps the one the snapshot was saved from.
           if ("image" in source) {
@@ -778,6 +785,7 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
           network: ["internet"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_OUTPUT_BYTES },
           fileWrite: { overwrite: true, noClobber: false },
+          lifetime: { minSeconds: 60, maxSeconds: MAX_TTL_SECONDS },
         },
         create: {
           recovery: { version: 1, token: CreateToken },
@@ -813,7 +821,12 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
 
             return input;
           },
-          submit: (input, ctx) => launch({ image: input.image.value }, ctx),
+          submit: (input, ctx) =>
+            launch(
+              { image: input.image.value },
+              ctx,
+              input.lifetimeSeconds ?? config.lifecycle.lifetimeSeconds,
+            ),
           observe: (attempt, ctx) => observeLaunch(attempt, ctx, partialCreate),
         },
         async inspect(box, ctx) {

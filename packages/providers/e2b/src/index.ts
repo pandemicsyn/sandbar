@@ -13,6 +13,7 @@ import {
   sandboxReference,
   assertSandboxReference,
   assertResourceScope,
+  defaultLifetime,
   unknownSandboxFacts,
   ResourceMinimums,
   Preserve,
@@ -84,6 +85,7 @@ const Configuration = z
      * and a prepared template must already meet it.
      */
     resources: ResourceMinimums.optional(),
+    /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
     timeoutSeconds: z.number().int().min(60).max(MAX_LIFETIME_SECONDS).optional(),
     preview: z
       .strictObject({ access: z.enum(["protected", "public"]).default("public") })
@@ -92,6 +94,7 @@ const Configuration = z
     snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
     lifecycle: z
       .strictObject({
+        /** Wall-clock lifetime; values under a minute run for E2B's minimum of 60 seconds. */
         lifetimeSeconds: z.number().int().positive().safe().max(MAX_LIFETIME_SECONDS).optional(),
         /** What `suspend()` keeps: filesystem and memory (default) or filesystem only. */
         suspension: z.strictObject({ preserve: PreserveSchema }).optional(),
@@ -103,7 +106,7 @@ const Configuration = z
       ctx.addIssue({
         code: "custom",
         path: ["lifecycle", "lifetimeSeconds"],
-        message: "Supply one lifetime option",
+        message: "Supply lifecycle.lifetimeSeconds or the deprecated timeoutSeconds, not both",
       });
 
     if (value.network !== undefined && value.networkPolicy !== undefined)
@@ -113,14 +116,18 @@ const Configuration = z
         message: "Supply network or the deprecated networkPolicy, not both",
       });
   })
-  .transform(({ network, ...value }) => ({
+  .transform(({ network, timeoutSeconds, ...value }) => ({
     ...value,
     networkPolicy: network ?? value.networkPolicy ?? "blocked",
-    timeoutSeconds:
-      value.lifecycle?.lifetimeSeconds === undefined
-        ? (value.timeoutSeconds ?? 900)
-        : Math.max(60, value.lifecycle.lifetimeSeconds),
+    lifetimeSeconds: nativeLifetime(
+      value.lifecycle?.lifetimeSeconds ?? timeoutSeconds ?? defaultLifetime(MAX_LIFETIME_SECONDS),
+    ),
   }));
+
+/** E2B's shortest sandbox timeout is one minute; shorter lifetimes round up to it. */
+function nativeLifetime(seconds: number): number {
+  return Math.max(60, seconds);
+}
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });
 
@@ -611,7 +618,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         scope: boundScope,
         transport,
         scopeMarker,
-        timeoutSeconds: config.timeoutSeconds,
+        timeoutSeconds: config.lifetimeSeconds,
         snapshotPreserve: config.snapshots?.preserve ?? Preserve.FILESYSTEM_AND_MEMORY,
         apiKey: credentials.apiKey,
         allowPublicTraffic: config.preview.access === "public",
@@ -854,6 +861,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
           createEnv: true,
+          // Under a minute rounds up to E2B's minimum, which inspect reports as the real expiry.
+          lifetime: { minSeconds: 1, maxSeconds: MAX_LIFETIME_SECONDS },
         },
         imageBuild: {
           async prepare(input) {
@@ -1048,7 +1057,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
               const request: Parameters<E2BTransport["create"]>[0] = {
                 templateId,
-                timeoutMs: config.timeoutSeconds * 1000,
+                timeoutMs: nativeLifetime(input.lifetimeSeconds ?? config.lifetimeSeconds) * 1000,
                 allowInternetAccess: input.networkPolicy === "internet",
                 allowPublicTraffic: token.allowPublicTraffic,
                 metadata,
@@ -1569,7 +1578,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
 
                 return ResolvedLifecycleInput.parse({
                   ...input,
-                  intent: { action: "resume", forSeconds: config.timeoutSeconds },
+                  intent: { action: "resume", forSeconds: config.lifetimeSeconds },
                 });
               },
               async submit(input, ctx) {
@@ -1723,7 +1732,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 });
 
                 const requested = RenewRequest.parse({
-                  forSeconds: input.forSeconds ?? config.timeoutSeconds,
+                  forSeconds: input.forSeconds ?? config.lifetimeSeconds,
                 }).forSeconds;
 
                 if (requested > MAX_LIFETIME_SECONDS)

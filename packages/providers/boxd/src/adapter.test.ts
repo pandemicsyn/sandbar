@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { afterEach, expect, test } from "bun:test";
 import { status } from "@grpc/grpc-js";
 import { adapterSuite } from "@sandbar-sdk/adapter/testing";
@@ -319,6 +320,63 @@ test("independent block disks mount exclusively, survive destroy and can be expl
   } finally {
     await client.close();
   }
+});
+
+test("boxd expiry comes from lifecycle, the deprecated top-level key or a per-create override", async () => {
+  const { fixture, adapter } = await setup();
+
+  const expiries = () =>
+    fixture.calls
+      .filter((call) => call.method === "SetDeleteAfter")
+      .map((call) => z.object({ deleteAfterSecs: z.number() }).parse(call.request).deleteAfterSecs);
+
+  for (const [setup, expected] of [
+    [{}, 900],
+    [{ lifecycle: { lifetimeSeconds: 3600 } }, 3600],
+    [{ lifetimeSeconds: 600 }, 600],
+  ] as const) {
+    const client = await Sandbar.connect({
+      adapter,
+      config: { org: "main", network: "internet", ...setup },
+      credentials: { apiKey: "fixture-main" },
+    });
+
+    try {
+      await (await client.sandboxes.create()).destroy();
+      expect(expiries().at(-1)).toBe(expected);
+    } finally {
+      await client.close();
+    }
+  }
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: { org: "main", network: "internet" },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    await (await client.sandboxes.create({ lifecycle: { lifetimeSeconds: 7200 } })).destroy();
+    expect(expiries().at(-1)).toBe(7200);
+    // Under a minute rounds up; inspect reports the real deadline.
+    await (await client.sandboxes.create({ lifecycle: { lifetimeSeconds: 10 } })).destroy();
+    expect(expiries().at(-1)).toBe(60);
+  } finally {
+    await client.close();
+  }
+
+  await expect(
+    Sandbar.connect({
+      adapter,
+      config: {
+        org: "main",
+        network: "internet",
+        lifetimeSeconds: 600,
+        lifecycle: { lifetimeSeconds: 600 },
+      },
+      credentials: { apiKey: "fixture-main" },
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 });
 
 test("fresh credentials reopen saved references; warm lifecycle and renewal report native effects", async () => {

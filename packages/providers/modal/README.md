@@ -8,7 +8,7 @@ import { modalAdapter } from "@sandbar-sdk/modal";
 
 const client = await Sandbar.connect({
   adapter: modalAdapter,
-  config: { appName: "my-existing-app", environment: "main", region: "us-east-1", timeoutSeconds: 300 },
+  config: { appName: "my-existing-app", environment: "main", region: "us-east-1", lifecycle: { lifetimeSeconds: 300 } },
   credentials: { tokenId: process.env.MODAL_TOKEN_ID!, tokenSecret: process.env.MODAL_TOKEN_SECRET! },
 });
 try {
@@ -28,7 +28,7 @@ The adapter verifies the existing Modal App and registers an owned close hook. `
 
 The deployed Modal App must already exist; a prepared image ID must exist when that image path is used. `modalAdapter` looks up the App without `createIfMissing`. The server returned App ID, configured environment and official endpoint bind the native scope. The SDK does not expose a verified workspace ID, so this adapter makes no workspace identity claim. Region is explicit when configured. Custom endpoints and profile endpoint overrides fail closed. Credential strings are never placed in resource or recovery references.
 
-Configure the default creation image with `image`: an `im-` image ID string, `{ kind: "prepared", value: "im-…" }`, or `{ kind: "oci", value: "<ref>" }`. It defaults to OCI `python:3.12-slim`, which provides the POSIX shell, coreutils and Python the adapter's features need, so `client.sandboxes.create()` works without an `environment`; a per-call environment wins. Create-time `env` is sent as the V2 create request's ephemeral secret map in the same single create call (no separate secret object); Modal applies it to the sandbox's commands, and per-call `env` overrides a name. Values never enter recovery state and are redacted from native error details. Live inheritance by exec has not been qualified. `timeoutSeconds` sets the native sandbox lifetime: default 900 seconds, from 60 to 86,400 (Modal's [24-hour limit](https://modal.com/docs/guide/sandboxes)). Modal has no renewal API.
+Configure the default creation image with `image`: an `im-` image ID string, `{ kind: "prepared", value: "im-…" }`, or `{ kind: "oci", value: "<ref>" }`. It defaults to OCI `python:3.12-slim`, which provides the POSIX shell, coreutils and Python the adapter's features need, so `client.sandboxes.create()` works without an `environment`; a per-call environment wins. Create-time `env` is sent as the V2 create request's ephemeral secret map in the same single create call (no separate secret object); Modal applies it to the sandbox's commands, and per-call `env` overrides a name. Values never enter recovery state and are redacted from native error details. Live inheritance by exec has not been qualified. `lifecycle.lifetimeSeconds` sets the native sandbox lifetime (deprecated alias: `timeoutSeconds`), and `create({ lifecycle: { lifetimeSeconds } })` overrides it per sandbox: default 900 seconds, up to 86,400 (Modal's [24-hour limit](https://modal.com/docs/guide/sandboxes)). Modal has no renewal API.
 
 Set `resources: { vcpus, memoryMiB }` to reserve that size: `vcpus` becomes Modal's CPU reservation (fractions allowed) and `memoryMiB` its memory reservation, sent on the single create call. Unset dimensions take Modal's defaults. Modal does not report reservations back, so the adapter records the size in a `sandbar_resources` tag and `inspect().resources` reports it only when both numbers are set. Modal rejects a size above its limits at create.
 

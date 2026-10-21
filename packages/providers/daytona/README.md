@@ -11,7 +11,7 @@ import { daytona } from '@sandbar-sdk/daytona';
 const sandbar = await Sandbar.connect(daytona({
   apiKey: process.env.DAYTONA_API_KEY!,
   target: 'us',
-  ttlMinutes: 15,
+  lifecycle: { lifetimeSeconds: 900 },
   network: 'blocked', // explicit opt-in; requires an eligible organization
 }));
 const sandbox = await sandbar.sandboxes.create({ environment: Image.prepared('existing-active-snapshot-id'), network: 'blocked' });
@@ -74,7 +74,7 @@ Tier 1 and Tier 2 accounts use Daytona's organization-managed default firewall, 
 const sandbar = await Sandbar.connect(daytona({
   apiKey: process.env.DAYTONA_API_KEY!,
   target: 'us',
-  ttlMinutes: 15,
+  lifecycle: { lifetimeSeconds: 900 },
   network: 'daytona-default',
 }));
 const sandbox = await sandbar.sandboxes.create({
@@ -123,7 +123,7 @@ Daytona keeps verified organization, endpoint, target/region, toolbox origin and
 
 ## Configured renewal
 
-Set `lifecycle: { lifetimeSeconds: 600 }` at adapter setup, then use `await box.renew()` or `await box.renew({ forSeconds: 61 })`. The setting controls initial lifetime and the default renewal window; supplying it with the legacy `ttlMinutes` option rejects before connection IO. Renewal requires running compute and a verified sandbox reference. Daytona rounds seconds upward to minutes with no adapter ceiling (`renewCapabilities` omits `maxSeconds`); omitted configuration retains 15 minutes. Hard TTL continues while stopped/archived. A reset can shorten an existing longer deadline and is not a guaranteed execution period. Native limits may be tighter. ACK survives failed metadata reads (`observation: null`); lost ACK remains uncertain and recovery never resets again. See the provider setup guide for expiry/clock/recovery details. Deterministic and packed coverage; `lifecycle-renew` passed at `3188e33` in #68 with confirmed owned cleanup, for the recorded configuration. Native suspend/resume is implemented for eligible unmounted compute; its live evidence is described below.
+Set `lifecycle: { lifetimeSeconds: 600 }` at adapter setup, then use `await box.renew()` or `await box.renew({ forSeconds: 61 })`. The setting controls initial lifetime and the default renewal window; supplying it with the deprecated `ttlMinutes` option rejects before connection IO. `create({ lifecycle: { lifetimeSeconds } })` overrides it for one sandbox, also rounded up to minutes. Renewal requires running compute and a verified sandbox reference. Daytona rounds seconds upward to minutes with no adapter ceiling (`renewCapabilities` omits `maxSeconds`); omitted configuration retains 15 minutes. Hard TTL continues while stopped/archived. A reset can shorten an existing longer deadline and is not a guaranteed execution period. Native limits may be tighter. ACK survives failed metadata reads (`observation: null`); lost ACK remains uncertain and recovery never resets again. See the provider setup guide for expiry/clock/recovery details. Deterministic and packed coverage; `lifecycle-renew` passed at `3188e33` in #68 with confirmed owned cleanup, for the recorded configuration. Native suspend/resume is implemented for eligible unmounted compute; its live evidence is described below.
 
 ## Native suspension
 

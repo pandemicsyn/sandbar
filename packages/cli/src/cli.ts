@@ -117,6 +117,12 @@ const createFlags = {
     type: "boolean",
     description: "Build --image now if this provider needs a build and none is recorded",
   },
+  ttl: {
+    type: "string",
+    value: "duration",
+    description:
+      "Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime",
+  },
 } satisfies Record<string, FlagSpec>;
 
 const execFlags = {
@@ -175,7 +181,7 @@ export const commands: readonly CommandSpec[] = [
     name: "create",
     summary: "Create a sandbox and print its name",
     usage:
-      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--env K=V]...",
+      "sandbar create [--name <name>] [--image <oci-ref> | --prepared <id>] [--network <policy>] [--ttl <duration>] [--env K=V]...",
     flags: {
       ...createFlags,
       "if-not-exists": {
@@ -189,6 +195,7 @@ export const commands: readonly CommandSpec[] = [
       "sandbar create --name web --network internet",
       "sandbar create --name job-42 --if-not-exists --json",
       "sandbar create --name ci --env-file .env --env API_TOKEN",
+      "sandbar create --name job-42 --ttl 1h",
     ],
     run: createCommand,
   },
@@ -294,7 +301,7 @@ export const commands: readonly CommandSpec[] = [
     examples: [
       "sandbar run -- python3 -c 'print(2 + 2)'",
       "sandbar run --network internet -- curl -sI https://example.com",
-      "sandbar run --push . --timeout 15m -- sh -c 'npm ci && npm test'",
+      "sandbar run --push . --timeout 15m --ttl 30m -- sh -c 'npm ci && npm test'",
     ],
     run: runCommand,
   },

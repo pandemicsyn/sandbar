@@ -38,7 +38,7 @@ To test a checkout in a throwaway sandbox, send it with `run --push`, and copy r
 ```sh
 sandbar run --push . --timeout 15m -- sh -c 'npm ci && npm test'
 
-sandbar create --name ci
+sandbar create --name ci --ttl 30m
 sandbar push ci                                  # prints /home/user/work
 sandbar exec ci --cwd /home/user/work -- npm test
 sandbar cp -r ci:/home/user/work/coverage ./coverage
@@ -103,3 +103,5 @@ The [command reference](/docs/cli/reference/) lists every exit code, and `sandba
 `rm` destroys a sandbox and forgets it. It only destroys sandboxes this CLI created; add `--force` for others. `rm --all` removes everything the CLI created and reports what it skipped. If some removals fail, `rm` keeps going and exits 8 with a list of what was removed, skipped and failed.
 
 Sandboxes cost money while they run. `run` and `rm` are the tools for keeping that bounded; `sandbar ls` shows anything left behind.
+
+As a backstop for a job that is killed before it can clean up, `create --ttl <duration>` and `run --ttl <duration>` (like `30m` or `2h`) set how long the provider keeps that sandbox before removing it. Without `--ttl`, the profile's `lifecycle.lifetimeSeconds` applies, 15 minutes by default. Keep it longer than `--timeout` for long commands. A provider that cannot apply the value rejects it before creating anything.

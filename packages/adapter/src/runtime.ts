@@ -20,6 +20,7 @@ import {
 } from "./resources";
 import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
+import { lifetimeProblem } from "./lifetime";
 import {
   CreateEnv,
   CreateSandboxInput,
@@ -181,6 +182,7 @@ const CreateInputSchema = z.strictObject({
   requirements: z.strictObject({ snapshot: SnapshotRequest }).optional(),
   mounts: z.array(MountSpec).max(32).optional(),
   env: CreateEnv.optional(),
+  lifetimeSeconds: z.number().int().positive().safe().optional(),
 });
 
 const ImageBuildInputSchema = z.strictObject({
@@ -633,6 +635,9 @@ function checkCapability(
         "UNSUPPORTED",
         "Create-time environment variables are unsupported by this adapter",
       );
+    const lifetime = lifetimeProblem(session.supports.lifetime, request.lifetimeSeconds);
+
+    if (lifetime) throw new AdapterError("UNSUPPORTED", lifetime);
 
     return request;
   }
