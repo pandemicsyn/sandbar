@@ -30,6 +30,7 @@ Scope is the account id from `GET /me` plus the fixed `https://boat.dev/api/v1` 
 | `resources` | Optional minimum `{ vcpus, memoryMiB }`; picks the smallest machine type: `small` (2 vCPU, 4 GiB), `default` (4, 8 GiB), `large` (8, 16 GiB), `xlarge` (16, 32 GiB; plan-dependent). Default `default`. `inspect().resources` reports Boat's size. Deprecated alias: `machine`. |
 | `environment` | Omitted: `noEnv`, so sandboxes get none of the account's secrets. Set a Boat environment name to attach one. |
 | `lifecycle.lifetimeSeconds` | 900; 60 s to 30 days. Expiry archives the sandbox. |
+| `snapshots.preserve` / `lifecycle.suspension.preserve` | Optional. Boat keeps the disk only, so `Preserve.FILESYSTEM` (the default) is accepted and `Preserve.FILESYSTEM_AND_MEMORY` rejects at connect. |
 
 ## Behavior
 
@@ -39,8 +40,9 @@ Scope is the account id from `GET /me` plus the fixed `https://boat.dev/api/v1` 
 - **Files** read and overwrite up to 5 MiB under `/home/user` or `/tmp`, as base64. No-clobber writes are unsupported.
 - **Suspend/resume** maps to Boat stop (archive the disk) and resume (fresh machine). Memory and processes are not kept.
 - **Renew** sets a new auto-stop window.
+- **Snapshots** save the disk of a running or archived sandbox as a Boat named snapshot. Each capture gets its own `sandbar-snapshot-*` name, and the reference pins the frozen artifact (`snapshotId`) as its generation, so a name saved again outside Sandbar no longer restores or deletes. Restore creates a sandbox `from` the name on a fresh machine of the captured type; memory and processes are not kept. `snapshots.list()` covers every named snapshot in the account. Named snapshots are kept until deleted.
 - **Destroy** permanently deletes with `X-Ascii-Confirm-Delete` and waits for the deletion operation to finish removing the machine. Named snapshots survive.
-- Unsupported: snapshots, volumes, previews, interactive processes, directory operations, blocked egress, regions and labels.
+- Unsupported: fork, snapshot sharing, restore size overrides, volumes, previews, interactive processes, directory operations, blocked egress, regions and labels.
 
 Every mutation is sent once. Refusals Boat documents as effect-free become ordinary errors; lost responses and ambiguous 5xx become `OUTCOME_UNKNOWN` and are never replayed.
 
