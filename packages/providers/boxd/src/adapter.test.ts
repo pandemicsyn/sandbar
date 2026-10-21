@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { status } from "@grpc/grpc-js";
 import { adapterSuite } from "@sandbar-sdk/adapter/testing";
-import { Sandbar, OutcomeUnknownError } from "sandbar-sdk";
+import { Sandbar, OutcomeUnknownError, Preserve } from "sandbar-sdk";
 import { createBoxdAdapter } from "./adapter";
 import { boxdFixture } from "./fixture.test-support";
 
@@ -1131,4 +1131,31 @@ test("capture and restore reject what boxd cannot do before any native mutation"
   } finally {
     await client.close();
   }
+});
+
+test("boxd setup accepts memory-keeping depth and rejects filesystem-only before any provider call", async () => {
+  const { fixture, adapter } = await setup();
+  const base = { org: "main", network: "internet" } as const;
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {
+      ...base,
+      snapshots: { preserve: Preserve.FILESYSTEM_AND_MEMORY },
+      lifecycle: { suspension: { preserve: Preserve.FILESYSTEM_AND_MEMORY } },
+    },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  await client.close();
+  const before = fixture.calls.length;
+
+  for (const config of [
+    { ...base, snapshots: { preserve: Preserve.FILESYSTEM } },
+    { ...base, lifecycle: { suspension: { preserve: Preserve.FILESYSTEM } } },
+  ])
+    await expect(
+      Sandbar.connect({ adapter, config, credentials: { apiKey: "fixture-main" } }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(fixture.calls).toHaveLength(before);
 });

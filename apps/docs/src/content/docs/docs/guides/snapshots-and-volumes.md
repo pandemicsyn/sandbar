@@ -73,7 +73,7 @@ const captured = await source.snapshot({
 }); // E2B can satisfy this; Daytona rejects before stopping compute.
 ```
 
-Where a provider offers both, choose what capture keeps once, in adapter setup, with the exported `Preserve` constants. The choice is exact: E2B's `Preserve.FILESYSTEM` skips memory, and restored sandboxes boot fresh. Omit it to keep the provider's default. A choice the adapter cannot honor rejects before any sandbox changes.
+Where a provider offers both, choose what capture keeps once, in adapter setup, with the exported `Preserve` constants. The choice is exact: E2B's `Preserve.FILESYSTEM` skips memory, and restored sandboxes boot fresh. boxd always keeps memory, so it rejects `Preserve.FILESYSTEM` at connect. Omit it to keep the provider's default. A choice the adapter cannot honor rejects before any sandbox changes.
 
 ```ts
 import { Preserve } from "sandbar-sdk";

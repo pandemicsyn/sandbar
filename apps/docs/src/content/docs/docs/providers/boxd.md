@@ -30,16 +30,18 @@ Use a member API key. `connect` checks that `org` is the key's authenticated def
 
 ## Setup
 
-| Setting             | Default               | Notes                                                                                                                                                                               |
-| ------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org`               | required              | The authenticated default org's ID or slug.                                                                                                                                         |
-| `network`           | required              | Must be `"internet"`. boxd isolates machines from peers and metadata services, but has no egress controls. Deprecated alias: `networkPolicy`.                                       |
-| `image`             | cluster default image | An OCI image reference. boxd boots it directly.                                                                                                                                     |
-| `resources`         | account default size  | Minimum `{ vcpus, memoryMiB }`. Picks the smallest of 1, 2, 4 or 8 vCPUs with 4, 8, 16 or 32 GiB RAM. Deprecated alias: `size` (a vCPU count). The private disk is fixed at 100 GB. |
-| `lifetimeSeconds`   | 900                   | At least 60 seconds, no maximum. Also the default `renew()` window.                                                                                                                 |
-| `preview.access`    | `public`              | `public` creates routes and turns off boxd's browser protection. `protected` keeps protection on and creates no routes. See [Public previews](#public-previews).                    |
-| `preview.ports`     | `[3000]`              | 1 to 16 distinct ports to route when `access` is `public`.                                                                                                                          |
-| `volumes.sizeBytes` | 10 GiB                | Size of each new disk, from 1 GiB to 1 TiB, subject to your quota.                                                                                                                  |
+| Setting                         | Default                          | Notes                                                                                                                                                                               |
+| ------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `org`                           | required                         | The authenticated default org's ID or slug.                                                                                                                                         |
+| `network`                       | required                         | Must be `"internet"`. boxd isolates machines from peers and metadata services, but has no egress controls. Deprecated alias: `networkPolicy`.                                       |
+| `image`                         | cluster default image            | An OCI image reference. boxd boots it directly.                                                                                                                                     |
+| `resources`                     | account default size             | Minimum `{ vcpus, memoryMiB }`. Picks the smallest of 1, 2, 4 or 8 vCPUs with 4, 8, 16 or 32 GiB RAM. Deprecated alias: `size` (a vCPU count). The private disk is fixed at 100 GB. |
+| `lifetimeSeconds`               | 900                              | At least 60 seconds, no maximum. Also the default `renew()` window.                                                                                                                 |
+| `preview.access`                | `public`                         | `public` creates routes and turns off boxd's browser protection. `protected` keeps protection on and creates no routes. See [Public previews](#public-previews).                    |
+| `preview.ports`                 | `[3000]`                         | 1 to 16 distinct ports to route when `access` is `public`.                                                                                                                          |
+| `volumes.sizeBytes`             | 10 GiB                           | Size of each new disk, from 1 GiB to 1 TiB, subject to your quota.                                                                                                                  |
+| `snapshots.preserve`            | `Preserve.FILESYSTEM_AND_MEMORY` | Snapshots always keep memory. `Preserve.FILESYSTEM` is rejected at connect.                                                                                                         |
+| `lifecycle.suspension.preserve` | `Preserve.FILESYSTEM_AND_MEMORY` | `suspend()` always keeps memory. `Preserve.FILESYSTEM` is rejected at connect.                                                                                                      |
 
 Create-time `env` is rejected with `UnsupportedFeatureError` before allocation, because boxd machine variables are not known to reach commands. Pass variables per call with `exec({ env })`; see [environment variables](/docs/guides/images-and-networking/#set-environment-variables). `region` and `labels` are rejected.
 
@@ -81,7 +83,7 @@ With `preview: { access: "protected" }`, preview lookup fails as unsupported. Th
 
 ## Snapshots
 
-`box.snapshot()` saves memory and disk together. boxd pauses the machine briefly and it keeps running; a restored machine resumes the captured processes under a new ID, with its own name, URL and private IP. Processes that cached the old hostname or address keep the stale value.
+`box.snapshot()` always saves memory and disk together; boxd has no filesystem-only capture, so `snapshots: { preserve: Preserve.FILESYSTEM }` fails at connect. boxd pauses the machine briefly and it keeps running; a restored machine resumes the captured processes under a new ID, with its own name, URL and private IP. Processes that cached the old hostname or address keep the stale value.
 
 boxd keeps only the latest version under a snapshot name, so every capture gets its own name and the reference remembers the captured version. If someone saves that snapshot again outside Sandbar, `inspect()`, `restore()` and `delete()` fail with `CONFLICT` before changing anything. A restore keeps the captured size and `internet` networking, applies your configured lifetime and preview settings, and cannot attach disks. Snapshots do not expire, so delete them when you are done. See [snapshots and volumes](/docs/guides/snapshots-and-volumes/).
 
