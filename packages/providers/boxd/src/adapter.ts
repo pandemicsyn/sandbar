@@ -43,6 +43,7 @@ import {
   type BoxdNativeClient,
   type CallContext,
 } from "./transport";
+import { startBoxdProcess } from "./process";
 
 const Configuration = z
   .strictObject({
@@ -1071,6 +1072,14 @@ export function createBoxdAdapter(
 
               return rejection(ctx, error);
             }
+          },
+        },
+        processes: {
+          supports: { sustainedOutput: true, binaryOutput: true, execCapture: "bytes" },
+          async start(input, ctx) {
+            await requireMachine(input.sandbox, ctx);
+
+            return startBoxdProcess(native, input, ctx);
           },
         },
         async preview(input, ctx) {

@@ -40,7 +40,7 @@ Create uses peer/metadata isolation, with **internet egress allowed**. `isolated
 | Feature | Adapter behavior |
 | --- | --- |
 | Compute | Create/readiness, scoped inspect/reopen/inventory and confirmed destroy. |
-| Exec | Safely quoted argv/shell, cwd/env, original stdout/stderr bytes; combined output collection bounded to 1 MiB with truthful truncation. Finite byte stdin up to 1 MiB, in 64 KiB frames followed by native EOF. Sustained processes, PTYs, signals and process reopening remain unsupported. |
+| Exec | Safely quoted argv/shell, cwd/env, original stdout/stderr bytes; combined output collection bounded to 1 MiB with truthful truncation. Finite byte stdin up to 1 MiB, in 64 KiB frames followed by native EOF. Sustained processes stream stdout/stderr as they arrive, as text or exact bytes, over one native `Exec` call; `terminate()` cancels that call, which kills the command's process group. Incremental stdin, PTYs, other signals, status checks and process reopening remain unsupported. |
 | Files | Bounded binary reads/writes up to 1 MiB. Overwrite uses native upload with an actual byte-count acknowledgement. Default no-clobber uses Python 3 exclusive creation. Complete bounded `readDirectory`; recursive-opt-in mkdir/remove. |
 | Extra filesystem operations | Python 3 lstat/stat/exists (dangling links exist), regular-file copy, same-filesystem move, staged writes and incremental reads in 64 KiB chunks. Walk/text lines compose these hooks. |
 | Volumes | Independent block disks; CRUD and whole-disk create-time mounts, read-only/read-write, one machine at a time even read-only. No subpaths or versions. |

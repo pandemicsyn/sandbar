@@ -211,8 +211,14 @@ export async function boxdFixture() {
     badOrg = false,
     truncatedListing = false;
 
-  let execFrames = [{ data: Uint8Array.of(0, 255, 128), exitCode: 0 }];
+  let execFrames: { data: Uint8Array; exitCode: number; isStderr?: boolean }[] = [
+    { data: Uint8Array.of(0, 255, 128), exitCode: 0 },
+  ];
+
   let omitExit = false;
+  let holdExec = false;
+  let releaseExec: (() => void) | undefined;
+  let execCancelled = 0;
   let localFilesystem = false;
   let lostHelper = "";
   let execFailures = 0;
@@ -254,9 +260,24 @@ export async function boxdFixture() {
 
           for (const frame of execFrames) call.write(frame);
 
-          if (!omitExit)
-            call.write({ data: new Uint8Array(), exitCode: execFrames.at(-1)?.exitCode ?? 0 });
-          call.end();
+          const finish = () => {
+            if (!omitExit)
+              call.write({ data: new Uint8Array(), exitCode: execFrames.at(-1)?.exitCode ?? 0 });
+            call.end();
+          };
+
+          if (!holdExec) {
+            finish();
+
+            return;
+          }
+
+          // A held command runs until released or until the client cancels the call.
+          releaseExec = finish;
+          call.on("cancelled", () => {
+            execCancelled++;
+            releaseExec = undefined;
+          });
         });
       };
     } else if (name === "DownloadFileStream") {
@@ -797,6 +818,17 @@ export async function boxdFixture() {
     },
     omitExit() {
       omitExit = true;
+    },
+    holdExec() {
+      holdExec = true;
+    },
+    releaseExec() {
+      if (!releaseExec) throw Error("No held exec");
+      releaseExec();
+      releaseExec = undefined;
+    },
+    get execCancelled() {
+      return execCancelled;
     },
     execFrames(value: typeof execFrames) {
       execFrames = value;
