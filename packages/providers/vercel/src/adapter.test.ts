@@ -8,8 +8,8 @@ import {
   operationParts,
   type Json,
 } from "@sandbar-sdk/adapter";
-import { adapterSuite } from "@sandbar-sdk/adapter/testing";
-import { Image, Sandbar, type ExecInput } from "sandbar-sdk";
+import { adapterSuite, snapshotSuite } from "@sandbar-sdk/adapter/testing";
+import { Image, Preserve, Sandbar, type ExecInput } from "sandbar-sdk";
 import { createVercelAdapter } from "./adapter";
 import type { VercelTransport } from "./transport";
 
@@ -1262,6 +1262,81 @@ test("Vercel filesystem snapshot capture/restore/delete retains independent exac
     await snapshot.delete();
     expect([...native.snapshots.values()][0]!.status).toBe("deleted");
     expect(native.requests.filter((r) => r.init.method === "DELETE")).toHaveLength(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Vercel passes the shared snapshot suite", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: native.adapter,
+    config: { ...config, snapshots: { preserve: Preserve.FILESYSTEM } },
+    credentials,
+  });
+
+  try {
+    await snapshotSuite({ client, path: "/tmp/sandbar-suite.bin", preserve: Preserve.FILESYSTEM });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Vercel snapshot retention sets the native expiration and the retention guarantee", async () => {
+  for (const [retentionSeconds, expiration, minimum] of [
+    [14 * 86_400, 14 * 86_400_000, 14 * 86_400],
+    [0, 0, Number.MAX_SAFE_INTEGER],
+  ] as const) {
+    const native = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, snapshots: { retentionSeconds } },
+      credentials,
+    });
+
+    try {
+      const source = await client.sandboxes.create();
+      const check = await source.checkSnapshot({ retention: { minimumSeconds: minimum } });
+      expect(check.status).toBe("supported");
+      await source.snapshot();
+      const capture = native.requests.find((r) => r.url.pathname.endsWith("/snapshot"));
+      expect(JSON.parse(String(capture?.init.body))).toEqual({ expiration });
+    } finally {
+      await client.close();
+    }
+  }
+
+  const persistent = Sandbar.connect({
+    adapter: fixture().adapter,
+    config: { ...config, persistent: true, snapshots: { retentionSeconds: 60 } },
+    credentials,
+  });
+
+  await expect(persistent).rejects.toMatchObject({ code: "UNSUPPORTED" });
+});
+
+test("Vercel accepts filesystem-only preserve and rejects memory at connect before any call", async () => {
+  const native = fixture();
+
+  const connect = (preserve: Preserve) =>
+    Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, snapshots: { preserve } },
+      credentials,
+    });
+
+  await expect(connect(Preserve.FILESYSTEM_AND_MEMORY)).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+  });
+  expect(native.requests).toHaveLength(0);
+
+  const client = await connect(Preserve.FILESYSTEM);
+
+  try {
+    const { capture } = await (await client.sandboxes.create()).snapshot();
+    expect(capture.preserve).toBe(Preserve.FILESYSTEM);
   } finally {
     await client.close();
   }

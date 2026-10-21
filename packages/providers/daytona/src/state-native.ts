@@ -11,6 +11,7 @@ import {
   sandboxReference,
   type SandboxReference,
   type Sandbox,
+  Preserve,
   resolveSnapshot,
   type AdapterSession,
   type Scope,
@@ -100,17 +101,27 @@ function captureClass(value: string | undefined): CaptureClass | null {
   return parsed.success ? parsed.data : null;
 }
 
-const CaptureFacts = z.strictObject({
-  preserve: z.literal("filesystem"),
-  interruption: z.enum(["none", "stop"]),
-  restoreExecution: z.literal("fresh"),
-});
+const CaptureFacts = z.union([
+  z.strictObject({
+    preserve: z.literal("filesystem"),
+    interruption: z.enum(["none", "stop"]),
+    restoreExecution: z.literal("fresh"),
+  }),
+  // Hot Linux VM capture: the source keeps running and restore resumes its processes.
+  z.strictObject({
+    preserve: z.literal("filesystem+memory"),
+    interruption: z.literal("pause"),
+    restoreExecution: z.literal("resume"),
+  }),
+]);
 
 const Token = z.strictObject({
   name: z.string().min(1).max(128),
   sourceId: z.string().min(1).max(512),
   /** Checkpoints saved before Linux VM capture was mapped are container captures. */
   sourceClass: CaptureClass.default("container"),
+  /** Hot capture (`includeMemory: true`) of a running Linux VM: no stop and no restart. */
+  memory: z.boolean().default(false),
   initialState: z.enum(["running", "stopped"]),
   restartRequired: z.boolean(),
   stopState: z
@@ -209,6 +220,8 @@ export function daytonaState(input: {
   apiKey: string;
   target: string;
   restartAfterCapture?: boolean;
+  /** Configured capture depth; `filesystem+memory` takes hot Linux VM snapshots. */
+  preserve?: Preserve;
   fetch: typeof fetch;
 }) {
   const scope = input.scope;
@@ -234,7 +247,7 @@ export function daytonaState(input: {
   async function request(
     method: string,
     path: string,
-    body?: { name: string; includeMemory?: false },
+    body?: { name: string; includeMemory?: boolean },
     ctx?: ReadContext,
   ) {
     const headers = new Headers({
@@ -502,13 +515,14 @@ export function daytonaState(input: {
 
     if (
       evidence?.kind === "snapshot" &&
-      evidence.preserve === "filesystem" &&
+      evidence.preserve !== undefined &&
       captureClass(evidence.sourceClass) !== null &&
       evidence.sourceId === v.sourceSandboxId &&
-      v.sandboxClass === evidence.sourceClass
+      v.sandboxClass === evidence.sourceClass &&
+      (evidence.preserve === "filesystem" || evidence.sourceClass === "linux-vm")
     ) {
-      info.preserve = "filesystem";
-      info.restoreExecution = "fresh";
+      info.preserve = evidence.preserve;
+      info.restoreExecution = evidence.preserve === "filesystem" ? "fresh" : "resume";
       info.mountHandling = "none";
       info.consistency = evidence.consistency ?? "unknown";
       info.reference.history = ref.history;
@@ -631,6 +645,33 @@ export function daytonaState(input: {
         reason: "Capture with external volumes is not mapped",
       };
 
+    if (input.preserve === Preserve.FILESYSTEM_AND_MEMORY) {
+      if (sourceClass !== "linux-vm")
+        return {
+          status: "unsupported" as const,
+          reason:
+            "Daytona containers capture the filesystem only; memory capture needs a Linux VM sandbox",
+        };
+
+      const hot: SnapshotProfile = {
+        id: profileId(sourceClass, true),
+        preserve: Preserve.FILESYSTEM_AND_MEMORY,
+        sourceStates: ["running"],
+        // Daytona does not document whether hot capture pauses the VM; claim no less.
+        interruption: "pause",
+        sourceAfter: "unchanged",
+        connections: "unknown",
+        consistency: "unknown",
+        restoreExecution: "resume",
+        mountHandling: "none",
+      };
+
+      return {
+        status: "supported" as const,
+        value: { profiles: [hot], defaultProfileId: hot.id },
+      };
+    }
+
     const profile: SnapshotProfile = {
       id: profileId(sourceClass),
       preserve: "filesystem",
@@ -650,8 +691,13 @@ export function daytonaState(input: {
     };
   }
 
-  function profileId(sourceClass: CaptureClass) {
-    return `daytona-${sourceClass}-cold`;
+  function profileId(sourceClass: CaptureClass, memory = false) {
+    return `daytona-${sourceClass}-${memory ? "hot" : "cold"}`;
+  }
+
+  /** Source state once capture completes: hot captures and restarts leave it running. */
+  function settledState(token: z.infer<typeof Token>) {
+    return token.memory || token.restartRequired ? "started" : "stopped";
   }
 
   async function observedCapture(
@@ -662,6 +708,7 @@ export function daytonaState(input: {
     consistency: SnapshotInfo["consistency"] = "unknown",
     expectedId?: string,
     sourceClass: CaptureClass = "container",
+    memory = false,
   ) {
     const response = await request("GET", `/snapshots/${encodeURIComponent(name)}`, undefined, ctx);
 
@@ -682,16 +729,16 @@ export function daytonaState(input: {
     info.consistency = consistency;
 
     if (acknowledged) {
-      // This adapter dispatched the capture with includeMemory false.
-      info.preserve = "filesystem";
-      info.restoreExecution = "fresh";
+      // This adapter dispatched the capture, so it knows whether includeMemory was set.
+      info.preserve = memory ? "filesystem+memory" : "filesystem";
+      info.restoreExecution = memory ? "resume" : "fresh";
       info.reference.history = history.issue({
         version: 1,
         kind: "snapshot",
         nativeId: v.id,
         sourceId,
         sourceClass,
-        preserve: "filesystem",
+        preserve: info.preserve,
         mounts: "none",
         consistency,
       });
@@ -954,13 +1001,13 @@ export function daytonaState(input: {
 
     return (
       token.initialState === accepted.sourceState &&
-      profile.id === profileId(token.sourceClass) &&
+      profile.id === profileId(token.sourceClass, token.memory) &&
       token.capture.preserve === profile.preserve &&
       token.capture.interruption === profile.interruption &&
       token.capture.restoreExecution === profile.restoreExecution &&
       token.consistency === profile.consistency &&
       token.restartRequired ===
-        (token.initialState === "running" && profile.sourceAfter === "unchanged")
+        (!token.memory && token.initialState === "running" && profile.sourceAfter === "unchanged")
     );
   }
 
@@ -1016,7 +1063,7 @@ export function daytonaState(input: {
     if (token.sourceObservedAt && token.sourceObservedState)
       outcome.source = {
         state: token.sourceObservedState,
-        connections: token.stopState === "completed" ? "dropped" : "unknown",
+        connections: token.stopState === "completed" && !token.memory ? "dropped" : "unknown",
         observedAt: token.sourceObservedAt,
       };
 
@@ -1087,7 +1134,7 @@ export function daytonaState(input: {
       );
     }
 
-    const expected = token.restartRequired ? "started" : "stopped";
+    const expected = settledState(token);
 
     if (
       source.state !== expected ||
@@ -1128,6 +1175,7 @@ export function daytonaState(input: {
           token.consistency,
           token.snapshotId,
           token.sourceClass,
+          token.memory,
         );
       } catch {
         return ctx.unknown("Captured snapshot inspection is unavailable", captureOutcome(token));
@@ -1141,7 +1189,7 @@ export function daytonaState(input: {
       capture: token.capture,
       source: {
         state: expected === "started" ? ("running" as const) : ("stopped" as const),
-        connections: "dropped" as const,
+        connections: token.memory ? ("unknown" as const) : ("dropped" as const),
         observedAt: new Date().toISOString(),
       },
       retainedResources: [info.reference],
@@ -1192,6 +1240,7 @@ export function daytonaState(input: {
           token.consistency,
           token.snapshotId,
           token.sourceClass,
+          token.memory,
         );
 
         if (info) {
@@ -1429,7 +1478,10 @@ export function daytonaState(input: {
 
       const captureSource = await box(token.sourceId, context, expectedReference);
 
-      if (captureSource.state !== "stopped" || profileFor(captureSource).status !== "supported")
+      if (
+        captureSource.state !== (token.memory ? "started" : "stopped") ||
+        profileFor(captureSource).status !== "supported"
+      )
         return ctx.unknown("Source capture eligibility changed before capture dispatch");
       token.captureState = "uncertain";
       await ctx.checkpoint(token);
@@ -1449,7 +1501,7 @@ export function daytonaState(input: {
         const response = await request(
           "POST",
           `/sandbox/${encodeURIComponent(source.id)}/snapshot`,
-          { name, includeMemory: false },
+          { name, includeMemory: token.memory },
           context,
         );
 
@@ -1475,6 +1527,7 @@ export function daytonaState(input: {
           token.consistency,
           undefined,
           token.sourceClass,
+          token.memory,
         );
 
         if (info) {
@@ -1497,6 +1550,7 @@ export function daytonaState(input: {
             token.consistency,
             token.snapshotId,
             token.sourceClass,
+            token.memory,
           );
 
           if (info) {
@@ -1525,7 +1579,7 @@ export function daytonaState(input: {
           expectedReference,
         );
 
-        const expected = token.restartRequired ? "started" : "stopped";
+        const expected = settledState(token);
 
         observeSource(token, final.state);
 
@@ -1539,7 +1593,7 @@ export function daytonaState(input: {
           capture: token.capture,
           source: {
             state: expected === "started" ? ("running" as const) : ("stopped" as const),
-            connections: "dropped" as const,
+            connections: token.memory ? ("unknown" as const) : ("dropped" as const),
             observedAt: new Date().toISOString(),
           },
           retainedResources: [info.reference],
@@ -1693,28 +1747,33 @@ export function daytonaState(input: {
 
         if (!sourceClass) return ctx.reject("UNSUPPORTED", "Source class is not capturable");
 
+        const memory = plan.value.profile.preserve === Preserve.FILESYSTEM_AND_MEMORY;
+        const stops = initial === "running" && !memory;
+        const restartRequired = stops && input.restartAfterCapture !== false;
+
         const token: z.infer<typeof Token> = {
           name,
           sourceId: source.id,
           sourceClass,
+          memory,
           initialState: initial,
           sourceState: initial,
           sourceObservedState: initial,
           sourceObservedAt: new Date().toISOString(),
-          restartRequired: initial === "running" && input.restartAfterCapture !== false,
-          stopState: initial === "running" ? "not-submitted" : "completed",
-          restartState:
-            initial === "running" && input.restartAfterCapture !== false
-              ? "not-submitted"
-              : "completed",
+          restartRequired,
+          // Hot capture never stops the source, so its stop stage is already settled.
+          stopState: stops ? "not-submitted" : "completed",
+          restartState: restartRequired ? "not-submitted" : "completed",
           consistency: plan.value.profile.consistency,
-          stage: initial === "running" ? "stop" : "capture",
+          stage: stops ? "stop" : "capture",
           captureState: "not-submitted",
-          capture: {
-            preserve: "filesystem",
-            interruption: plan.value.profile.interruption === "none" ? "none" : "stop",
-            restoreExecution: "fresh",
-          },
+          capture: memory
+            ? { preserve: "filesystem+memory", interruption: "pause", restoreExecution: "resume" }
+            : {
+                preserve: "filesystem",
+                interruption: plan.value.profile.interruption === "none" ? "none" : "stop",
+                restoreExecution: "fresh",
+              },
         };
 
         await ctx.checkpoint(token);

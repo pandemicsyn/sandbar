@@ -14,6 +14,7 @@ import {
   assertResourceScope,
   unknownSandboxFacts,
   nativeDeadline,
+  PreserveSchema,
   ResourceMinimums,
   DEFAULT_LIFETIME_SECONDS,
   type SandboxInfo,
@@ -62,7 +63,14 @@ const Configuration = z
     network: z.enum(["blocked", "internet", "daytona-default"]).optional(),
     networkPolicy: z.enum(["blocked", "internet", "daytona-default"]).optional(),
     snapshots: z
-      .strictObject({ restartAfterCapture: z.boolean().default(true) })
+      .strictObject({
+        restartAfterCapture: z.boolean().default(true),
+        /**
+         * Capture depth. `filesystem` (the default) stops, captures and restarts the source;
+         * `filesystem+memory` takes a hot snapshot of a running Linux VM, and containers reject it.
+         */
+        preserve: PreserveSchema.optional(),
+      })
       .default({ restartAfterCapture: true }),
     /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
     ttlMinutes: z.coerce.number().int().min(1).safe().optional(),
@@ -510,6 +518,7 @@ export function createDaytonaAdapter(
         apiKey: credentials.apiKey,
         target: config.target,
         restartAfterCapture: config.snapshots.restartAfterCapture,
+        preserve: config.snapshots.preserve,
         fetch: fetchImpl ?? fetch,
       });
 
@@ -767,17 +776,22 @@ export function createDaytonaAdapter(
       ) => {
         const info = await resourceState.inspectSnapshot(input.snapshot, ctx);
 
+        // Hot captures come from Linux VMs only and resume their processes.
+        const hot =
+          info.preserve === "filesystem+memory" &&
+          info.restoreExecution === "resume" &&
+          info.source?.class === "linux-vm";
+
         if (
           info.mountHandling !== "none" ||
           info.mounts.length ||
           info.state !== "ready" ||
-          info.preserve !== "filesystem" ||
-          info.restoreExecution !== "fresh" ||
+          !(hot || (info.preserve === "filesystem" && info.restoreExecution === "fresh")) ||
           Object.keys(input.request.resources ?? {}).length
         )
           throw new AdapterError(
             "UNSUPPORTED",
-            "Only mount-free filesystem/fresh container snapshots can be restored",
+            "Only mount-free snapshots captured by this adapter can be restored",
           );
 
         if (input.request.mounts?.length) {

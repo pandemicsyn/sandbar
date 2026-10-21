@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
-import { Sandbar, Image, SandbarError } from "sandbar-sdk";
+import { Sandbar, Image, Preserve, SandbarError } from "sandbar-sdk";
+import { snapshotSuite } from "@sandbar-sdk/adapter/testing";
 import { createDaytonaAdapter } from "./adapter";
 
 test.each([
@@ -368,20 +369,23 @@ test.each([
   },
 );
 
-test("Linux VM cold capture restores unmounted and rejects mounted restore before effects", async () => {
+/** A Daytona Linux VM API fixture: one source VM, one captured snapshot and its restores. */
+function vmFixture(hot: boolean) {
   let state = "started";
   let snapshotName = "";
   let restoreLabels: Record<string, string> = {};
   let sourceLabels: Record<string, string> = {};
   const names: Record<string, string> = {};
   let restores = 0;
+  let snapshotDeleted = false;
+  const destroyed = new Set<string>();
 
   const vm = (id: string, labels: Record<string, string>, snapshot: string) => ({
     id,
     name: names[id] ?? "",
     organizationId: "org-1",
     target: "us",
-    state: id === "source" ? state : "started",
+    state: destroyed.has(id) ? "destroyed" : id === "source" ? state : "started",
     networkBlockAll: false,
     public: false,
     sandboxClass: "linux-vm",
@@ -419,8 +423,29 @@ test("Linux VM cold capture restores unmounted and rejects mounted restore befor
       if (route === "/api/snapshots/vm-base")
         return Response.json({ ...snapshot(), id: "vm-base", name: "vm-base" });
 
+      if (route === "/api/snapshots")
+        return Response.json({
+          items: snapshotName && !snapshotDeleted ? [snapshot()] : [],
+          page: 1,
+          totalPages: 1,
+        });
+
+      if (route.startsWith("/api/snapshots/") && method === "DELETE") {
+        snapshotDeleted = true;
+
+        return new Response(null, { status: 204 });
+      }
+
       if (route.startsWith("/api/snapshots/"))
-        return snapshotName ? Response.json(snapshot()) : new Response(null, { status: 404 });
+        return snapshotName && !snapshotDeleted
+          ? Response.json(snapshot())
+          : new Response(null, { status: 404 });
+
+      if (route.startsWith("/api/sandbox/") && method === "DELETE") {
+        destroyed.add(route.slice("/api/sandbox/".length));
+
+        return Response.json({});
+      }
 
       if (route.startsWith("/api/volumes/"))
         return Response.json({
@@ -438,10 +463,10 @@ test("Linux VM cold capture restores unmounted and rejects mounted restore befor
 
       if (route === "/api/sandbox/source/snapshot") {
         const body = z
-          .object({ name: z.string(), includeMemory: z.literal(false) })
+          .object({ name: z.string(), includeMemory: z.literal(hot) })
           .parse(JSON.parse(String(init?.body)));
 
-        expect(state).toBe("stopped");
+        expect(state).toBe(hot ? "started" : "stopped");
         snapshotName = body.name;
 
         return Response.json({ id: "source", state });
@@ -482,41 +507,79 @@ test("Linux VM cold capture restores unmounted and rejects mounted restore befor
     { preconnect: fetch.preconnect },
   );
 
-  const client = await Sandbar.connect({
-    adapter: createDaytonaAdapter(fetchImpl),
-    config: { target: "us", networkPolicy: "daytona-default" },
-    credentials: { apiKey: "fixture" },
+  return { fetchImpl, restores: () => restores };
+}
+
+for (const hot of [false, true])
+  test(`Linux VM ${hot ? "hot" : "cold"} capture restores unmounted and rejects mounted restore before effects`, async () => {
+    const { fetchImpl, restores } = vmFixture(hot);
+
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(fetchImpl),
+      config: {
+        target: "us",
+        networkPolicy: "daytona-default",
+        snapshots: { preserve: hot ? Preserve.FILESYSTEM_AND_MEMORY : Preserve.FILESYSTEM },
+      },
+      credentials: { apiKey: "fixture" },
+    });
+
+    try {
+      const source = await client.sandboxes.create({ environment: Image.prepared("vm-base") });
+      const capture = await source.snapshot();
+      expect(capture.capture).toEqual(
+        hot
+          ? { preserve: "filesystem+memory", interruption: "pause", restoreExecution: "resume" }
+          : { preserve: "filesystem", interruption: "stop", restoreExecution: "fresh" },
+      );
+      const info = await capture.snapshot.inspect();
+      expect(info).toMatchObject({
+        preserve: hot ? "filesystem+memory" : "filesystem",
+        restore: { mounts: false },
+      });
+
+      const volume = await client.volumes.get({
+        version: 1,
+        kind: "volume",
+        provider: "daytona",
+        scope: capture.snapshot.reference.scope,
+        nativeId: "volume-1",
+        ownership: "unknown",
+      });
+
+      await expect(
+        capture.snapshot.restore({
+          networkPolicy: "daytona-default",
+          mounts: [volume.at("/data")],
+        }),
+      ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
+      expect(restores()).toBe(0);
+
+      const restored = await capture.snapshot.restore({ networkPolicy: "daytona-default" });
+      expect(restored.id).toBe("restored");
+      expect(restores()).toBe(1);
+    } finally {
+      await client.close();
+    }
   });
 
-  try {
-    const source = await client.sandboxes.create({ environment: Image.prepared("vm-base") });
-    const capture = await source.snapshot();
-    expect(capture.capture).toEqual({
-      preserve: "filesystem",
-      interruption: "stop",
-      restoreExecution: "fresh",
-    });
-    const info = await capture.snapshot.inspect();
-    expect(info).toMatchObject({ preserve: "filesystem", restore: { mounts: false } });
+for (const hot of [false, true])
+  test(`Linux VM ${hot ? "hot" : "cold"} capture passes the shared snapshot suite`, async () => {
+    const preserve = hot ? Preserve.FILESYSTEM_AND_MEMORY : Preserve.FILESYSTEM;
 
-    const volume = await client.volumes.get({
-      version: 1,
-      kind: "volume",
-      provider: "daytona",
-      scope: capture.snapshot.reference.scope,
-      nativeId: "volume-1",
-      ownership: "unknown",
+    const client = await Sandbar.connect({
+      adapter: createDaytonaAdapter(vmFixture(hot).fetchImpl),
+      config: { target: "us", networkPolicy: "daytona-default", snapshots: { preserve } },
+      credentials: { apiKey: "fixture" },
     });
 
-    await expect(
-      capture.snapshot.restore({ networkPolicy: "daytona-default", mounts: [volume.at("/data")] }),
-    ).rejects.toMatchObject({ code: "UNSUPPORTED", effect: "none" });
-    expect(restores).toBe(0);
-
-    const restored = await capture.snapshot.restore({ networkPolicy: "daytona-default" });
-    expect(restored.id).toBe("restored");
-    expect(restores).toBe(1);
-  } finally {
-    await client.close();
-  }
-});
+    try {
+      await snapshotSuite({
+        client,
+        createInput: { environment: Image.prepared("vm-base") },
+        preserve,
+      });
+    } finally {
+      await client.close();
+    }
+  });

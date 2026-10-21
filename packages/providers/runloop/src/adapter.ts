@@ -6,6 +6,8 @@ import {
   assertResourceScope,
   defaultLifetime,
   defineAdapter,
+  Preserve,
+  PreserveSchema,
   resolveSnapshot,
   ResourceMinimums,
   ResourceReference,
@@ -95,6 +97,8 @@ const Configuration = z
         "Runloop applies either a lifetime or an idle window, not both",
       )
       .default({}),
+    /** Runloop disk snapshots keep the filesystem only; `filesystem+memory` rejects at connect. */
+    snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
     preview: z
       .strictObject({
         /** `protected` tunnels need the returned header; `public` URLs are open to anyone with them. */
@@ -279,7 +283,7 @@ type PreparedDestroy = Sandbox & { alreadyShutdown: boolean };
 
 const profile: SnapshotProfile = {
   id: "runloop-disk",
-  preserve: "filesystem",
+  preserve: Preserve.FILESYSTEM,
   sourceStates: ["running"],
   // Runloop does not document whether a disk snapshot pauses the source; claim no less.
   interruption: "pause",
@@ -315,6 +319,12 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
     config: Configuration,
     credentials: Credentials,
     async connect({ config, credentials, host }) {
+      if (config.snapshots?.preserve === Preserve.FILESYSTEM_AND_MEMORY)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Runloop snapshots keep the disk only; memory snapshots are not supported",
+        );
+
       // Unmet minimums reject before any provider IO.
       const size = config.resources ? smallestSize("Runloop", SIZES, config.resources) : undefined;
       const native: RunloopClient = createRunloopClient(credentials.apiKey, options.fetch);
