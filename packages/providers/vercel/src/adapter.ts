@@ -30,6 +30,8 @@ import {
   type SandboxInfo,
   type ReadContext,
   type ProcessObservationFailure,
+  Preserve,
+  PreserveSchema,
 } from "@sandbar-sdk/adapter";
 import {
   boundedBody,
@@ -115,6 +117,8 @@ export const vercelConfig = z.strictObject({
     .default("vercel/sandbox/universal:latest"),
   timeoutSeconds: z.number().int().min(60).max(MAX_SESSION_SECONDS).default(900),
   persistent: z.boolean().default(false),
+  /** Vercel snapshots keep the filesystem only; `filesystem+memory` rejects at connect. */
+  snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
   network: policy.optional(),
   /** @deprecated Use `network`. */
   networkPolicy: policy.optional(),
@@ -262,6 +266,12 @@ export function createVercelAdapter(
     config: vercelConfig,
     credentials: z.strictObject({ token: z.string().min(1) }),
     async connect({ config, credentials, host }) {
+      if (config.snapshots?.preserve === Preserve.FILESYSTEM_AND_MEMORY)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Vercel snapshots keep the filesystem only; memory snapshots are not supported",
+        );
+
       if (config.network !== undefined && config.networkPolicy !== undefined)
         throw new AdapterError(
           "INVALID_ARGUMENT",
@@ -1146,7 +1156,7 @@ export function createVercelAdapter(
 
       const profile: SnapshotProfile = {
         id: "vercel-filesystem",
-        preserve: "filesystem",
+        preserve: Preserve.FILESYSTEM,
         sourceStates: ["running"],
         interruption: "terminate",
         sourceAfter: "destroyed",

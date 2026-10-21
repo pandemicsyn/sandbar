@@ -46,6 +46,7 @@ Use a token that can access the team and project. `connect` checks the team, pro
 | `network`             | `blocked`                         | `blocked` (Vercel deny-all) or `internet` (allow-all). Deprecated: `networkPolicy`, `vercel-deny-all`, `vercel-allow-all`.                                                               |
 | `ports`               | `[]`                              | Up to 15 distinct ports to expose as public HTTPS previews.                                                                                                                              |
 | `persistent`          | `false`                           | Keep files across suspend and resume. See [Persistent sandboxes](#persistent-sandboxes).                                                                                                 |
+| `snapshots.preserve`  | `filesystem`                      | Vercel snapshots keep files only; `Preserve.FILESYSTEM_AND_MEMORY` rejects `UNSUPPORTED` at connect.                                                                                     |
 
 Create-time image, region and network must match this setup. `create({ env })` sets Vercel session variables that every command inherits unless it overrides them; values are not saved in references and are redacted from Vercel error text. `labels` accepts up to four entries, and keys starting with `sandbar` are rejected. Mounts are rejected with `UNSUPPORTED`. See [environment variables](/docs/guides/images-and-networking/#set-environment-variables).
 

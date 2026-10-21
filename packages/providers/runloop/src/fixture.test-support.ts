@@ -36,6 +36,8 @@ type FixtureSnapshot = {
   status: "in_progress" | "complete" | "error" | "deleted";
   polls: number;
   metadata: Record<string, string>;
+  /** The source disk at capture; a Devbox created from the snapshot starts with these files. */
+  files: Map<string, Uint8Array>;
 };
 
 type FixturePolicy = {
@@ -264,6 +266,10 @@ export function runloopFixture() {
         files: new Map(),
       };
 
+      const from = box.body.snapshot_id ? snapshots.get(box.body.snapshot_id) : undefined;
+
+      if (from) box.files = new Map(from.files);
+
       if (dropNextPolicy) {
         dropNextPolicy = false;
         delete box.body.launch_parameters?.network_policy_id;
@@ -453,6 +459,7 @@ export function runloopFixture() {
         metadata: z
           .object({ metadata: z.record(z.string(), z.string()).default({}) })
           .parse(raw ?? {}).metadata,
+        files: new Map(box.files),
       };
 
       snapshots.set(snapshot.id, snapshot);

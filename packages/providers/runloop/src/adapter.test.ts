@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { adapterSuite } from "@sandbar-sdk/adapter/testing";
-import { Image, NonzeroExitError, OutcomeUnknownError, Sandbar } from "sandbar-sdk";
+import { adapterSuite, snapshotSuite } from "@sandbar-sdk/adapter/testing";
+import { Image, NonzeroExitError, OutcomeUnknownError, Preserve, Sandbar } from "sandbar-sdk";
 import type { z } from "zod";
 import { createRunloopAdapter, uuidv7 } from "./adapter";
 import { runloopFixture } from "./fixture.test-support";
@@ -612,6 +612,39 @@ test("snapshots capture, list, inspect, restore and delete with exact identities
     await snapshot.delete();
     expect(fixture.snapshots.get(snapshot.id)?.status).toBe("deleted");
     await expect(snapshot.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Runloop passes the shared snapshot suite", async () => {
+  const { connect } = setup();
+  const client = await connect({ ...internet, snapshots: { preserve: Preserve.FILESYSTEM } });
+
+  try {
+    await snapshotSuite({
+      client,
+      path: "/home/user/sandbar-suite.bin",
+      preserve: Preserve.FILESYSTEM,
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("Runloop accepts filesystem-only preserve and rejects memory at connect before any call", async () => {
+  const { fixture, connect } = setup();
+
+  await expect(
+    connect({ ...internet, snapshots: { preserve: Preserve.FILESYSTEM_AND_MEMORY } }),
+  ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  expect(fixture.calls).toHaveLength(0);
+
+  const client = await connect({ ...internet, snapshots: { preserve: Preserve.FILESYSTEM } });
+
+  try {
+    const { capture } = await (await client.sandboxes.create()).snapshot();
+    expect(capture.preserve).toBe(Preserve.FILESYSTEM);
   } finally {
     await client.close();
   }

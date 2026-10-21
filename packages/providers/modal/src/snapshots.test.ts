@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { status } from "@grpc/grpc-js";
 import { OutcomeUnknownError, Preserve, Sandbar } from "sandbar-sdk";
+import { snapshotSuite } from "@sandbar-sdk/adapter/testing";
 import { createModalAdapter } from "./adapter";
 import { createRejection, type ModalTransport } from "./transport";
 
@@ -271,6 +272,29 @@ test("Modal accepts filesystem-only preserve and rejects memory at connect befor
   try {
     const { capture } = await (await client.sandboxes.create()).snapshot();
     expect(capture.preserve).toBe(Preserve.FILESYSTEM);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Modal passes the shared snapshot suite without listing", async () => {
+  const native = fixture();
+
+  const client = await Sandbar.connect({
+    adapter: createModalAdapter(() => native.transport),
+    config: {
+      appName: "existing",
+      environment: "main",
+      image: "im-base",
+      snapshots: { preserve: Preserve.FILESYSTEM },
+    },
+    credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+  });
+
+  try {
+    // The fixture models no guest files; Modal has no snapshot listing API.
+    await snapshotSuite({ client, preserve: Preserve.FILESYSTEM, list: false });
+    expect(native.effects).toEqual({ snapshot: 1, delete: 1 });
   } finally {
     await client.close();
   }

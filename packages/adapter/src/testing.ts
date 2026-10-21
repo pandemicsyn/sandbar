@@ -339,3 +339,173 @@ export async function filesystemSuite(options: {
     await options.cleanup([source, copy, destination]);
   }
 }
+
+type SuiteSnapshot = {
+  readonly reference: import("./state").ResourceReference;
+  inspect(): Promise<import("./state").SnapshotInfo>;
+  restore(): Promise<SuiteSandbox>;
+  delete(): Promise<object>;
+};
+
+type SuiteSandbox = {
+  readonly id: string;
+  checkSnapshot(
+    request?: import("./state").SnapshotRequest,
+  ): Promise<import("./state").Support<import("./state").SnapshotPlan>>;
+  snapshot(): Promise<{
+    snapshot: SuiteSnapshot;
+    capture: Pick<
+      import("./state").SnapshotProfile,
+      "preserve" | "interruption" | "restoreExecution"
+    >;
+    source: { state: string };
+  }>;
+  writeFile(path: string, bytes: Uint8Array, options: { overwrite: true }): Promise<void>;
+  readFile(path: string): Promise<Uint8Array>;
+  destroy(): Promise<object>;
+};
+
+/** The public client surface `snapshotSuite` drives; a connected `sandbar-sdk` client satisfies it. */
+export type SnapshotSuiteClient<I = never> = {
+  sandboxes: { create(input?: I): Promise<SuiteSandbox> };
+  snapshots: {
+    get(reference: import("./state").ResourceReference): Promise<SuiteSnapshot>;
+    list(input?: {
+      limit?: number;
+      cursor?: string;
+    }): Promise<{ items: import("./state").SnapshotInfo[]; nextCursor?: string }>;
+  };
+};
+
+/**
+ * Qualify snapshot capture, reopen, restore, listing and deletion through the public client.
+ * Run it against an adapter's deterministic fixture; it creates two sandboxes and one snapshot.
+ */
+export async function snapshotSuite<I = never>(options: {
+  client: SnapshotSuiteClient<I>;
+  /** Create options for the source sandbox when the connection has no default environment. */
+  createInput?: I;
+  /**
+   * Writable file path in a new sandbox; the restored sandbox must hold the same bytes.
+   * Omit it only when the fixture does not model guest files.
+   */
+  path?: string;
+  /** The `snapshots.preserve` the client was connected with, when set. */
+  preserve?: import("./state").Preserve;
+  /** False when the provider has no snapshot listing, so `snapshots.list()` must reject. */
+  list?: boolean;
+}): Promise<{ scenarios: readonly string[] }> {
+  const { client } = options;
+  const scenarios: string[] = [];
+  const expected = Uint8Array.of(0, 255, 10, 83, 98);
+  const source = await client.sandboxes.create(options.createInput);
+  let restored: SuiteSandbox | undefined;
+  let snapshot: SuiteSnapshot | undefined;
+  let sourceGone = false;
+
+  try {
+    if (options.path) await source.writeFile(options.path, expected, { overwrite: true });
+    const plan = await source.checkSnapshot();
+    requireCondition(plan.status === "supported", "a fresh running sandbox must be capturable");
+    const profile = plan.value.profile;
+    requireCondition(
+      options.preserve === undefined || profile.preserve === options.preserve,
+      "the plan must use the configured preserve",
+    );
+    const other = profile.preserve === "filesystem" ? "filesystem+memory" : "filesystem";
+    const strict = await source.checkSnapshot({ requirements: { preserve: other } });
+    requireCondition(strict.status !== "supported", "an unmet preserve must never switch modes");
+    scenarios.push("exact preserve plan");
+
+    const captured = await source.snapshot();
+    snapshot = captured.snapshot;
+    sourceGone = profile.sourceAfter === "destroyed";
+    requireCondition(
+      captured.capture.preserve === profile.preserve &&
+        captured.capture.interruption === profile.interruption &&
+        captured.capture.restoreExecution === profile.restoreExecution,
+      "capture must report the planned profile",
+    );
+    requireCondition(
+      captured.source.state ===
+        (profile.sourceAfter === "unchanged" ? plan.value.sourceState : profile.sourceAfter),
+      "source state after capture must match the plan",
+    );
+    const info = await snapshot.inspect();
+    requireCondition(
+      info.state === "ready" &&
+        info.preserve === profile.preserve &&
+        info.restoreExecution === profile.restoreExecution &&
+        info.mountHandling === profile.mountHandling,
+      "inspect must report a ready snapshot with the captured profile",
+    );
+    scenarios.push("capture matches plan");
+
+    const saved = JSON.parse(JSON.stringify(snapshot.reference));
+    const reopened = await client.snapshots.get(saved);
+    const again = await reopened.inspect();
+    requireCondition(
+      again.reference.nativeId === saved.nativeId &&
+        again.reference.generation === saved.generation &&
+        again.preserve === profile.preserve,
+      "a saved reference must reopen the same snapshot and depth",
+    );
+    scenarios.push("saved reference reopens");
+
+    restored = await reopened.restore();
+    requireCondition(restored.id !== source.id, "restore must create a new sandbox");
+    scenarios.push("restore into new sandbox");
+
+    if (options.path) {
+      const bytes = await restored.readFile(options.path);
+      requireCondition(
+        bytes.length === expected.length && bytes.every((byte, index) => byte === expected[index]),
+        "restored sandbox must hold the captured bytes",
+      );
+      scenarios.push("restored files match capture");
+    }
+
+    if (options.list === false) {
+      let rejected = false;
+
+      try {
+        await client.snapshots.list({ limit: 1 });
+      } catch (error) {
+        rejected = error instanceof Error && "code" in error && error.code === "UNSUPPORTED";
+      }
+
+      requireCondition(rejected, "an adapter without listing must reject list as UNSUPPORTED");
+      scenarios.push("listing unsupported");
+    } else {
+      let cursor: string | undefined;
+      let found = false;
+
+      for (let page = 0; page < 20 && !found; page++) {
+        const listed = await client.snapshots.list({ limit: 50, cursor });
+        found = listed.items.some((item) => item.reference.nativeId === saved.nativeId);
+        cursor = listed.nextCursor;
+
+        if (!cursor) break;
+      }
+
+      requireCondition(found, "listing must include the captured snapshot");
+      scenarios.push("listing includes capture");
+    }
+
+    await restored.destroy();
+    restored = undefined;
+
+    if (!sourceGone) await source.destroy();
+    sourceGone = true;
+    await snapshot.delete();
+    snapshot = undefined;
+    scenarios.push("delete after compute cleanup");
+
+    return { scenarios };
+  } finally {
+    await restored?.destroy().catch(() => undefined);
+
+    if (!sourceGone) await source.destroy().catch(() => undefined);
+    await snapshot?.delete().catch(() => undefined);
+  }
+}

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { status } from "@grpc/grpc-js";
-import { adapterSuite } from "@sandbar-sdk/adapter/testing";
+import { adapterSuite, snapshotSuite } from "@sandbar-sdk/adapter/testing";
 import { Sandbar, OutcomeUnknownError, Preserve } from "sandbar-sdk";
 import { createBoxdAdapter } from "./adapter";
 import { boxdFixture } from "./fixture.test-support";
@@ -946,6 +946,30 @@ test("boxd declares create env unsupported and rejects it before any native call
 
 const snapshotCalls = (fixture: Awaited<ReturnType<typeof boxdFixture>>, method: string) =>
   fixture.calls.filter((call) => call.method === method);
+
+test("boxd passes the shared snapshot suite", async () => {
+  const { adapter } = await setup();
+
+  const client = await Sandbar.connect({
+    adapter,
+    config: {
+      org: "main",
+      network: "internet",
+      snapshots: { preserve: Preserve.FILESYSTEM_AND_MEMORY },
+    },
+    credentials: { apiKey: "fixture-main" },
+  });
+
+  try {
+    await snapshotSuite({
+      client,
+      path: "/root/sandbar-suite.bin",
+      preserve: Preserve.FILESYSTEM_AND_MEMORY,
+    });
+  } finally {
+    await client.close();
+  }
+});
 
 test("snapshots capture memory under a unique name and restore that exact version", async () => {
   const { fixture, connect } = await setup();
