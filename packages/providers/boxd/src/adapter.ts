@@ -8,6 +8,8 @@ import {
   MAX_DIRECTORY_ENTRIES,
   MAX_DIRECTORY_NAME_BYTES,
   AdapterCheckpointError,
+  Preserve,
+  PreserveSchema,
   assertResourceScope,
   defineAdapter,
   resolveSnapshot,
@@ -69,6 +71,14 @@ const Configuration = z
     /** @deprecated Use `resources: { vcpus }`. */
     size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
     lifetimeSeconds: z.number().int().min(60).safe().default(900),
+    /** boxd snapshots always keep memory; only `Preserve.FILESYSTEM_AND_MEMORY` is accepted. */
+    snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
+    lifecycle: z
+      .strictObject({
+        /** boxd pause always keeps memory; only `Preserve.FILESYSTEM_AND_MEMORY` is accepted. */
+        suspension: z.strictObject({ preserve: PreserveSchema }).optional(),
+      })
+      .optional(),
     volumes: z
       .strictObject({
         sizeBytes: z
@@ -185,7 +195,7 @@ function snapshotName(submission: string): string {
 /** Memory and disk are captured together during a brief pause; the source keeps running. */
 const profile: SnapshotProfile = {
   id: "boxd-memory",
-  preserve: "filesystem+memory",
+  preserve: Preserve.FILESYSTEM_AND_MEMORY,
   sourceStates: ["running"],
   interruption: "pause",
   sourceAfter: "unchanged",
@@ -257,6 +267,19 @@ export function createBoxdAdapter(
     config: Configuration,
     credentials: Credentials,
     async connect({ config, credentials, host }) {
+      // Exact depth choices boxd cannot honor reject before any provider IO.
+      if (config.snapshots?.preserve === Preserve.FILESYSTEM)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "boxd snapshots always capture memory with the disk; filesystem-only capture is unavailable",
+        );
+
+      if (config.lifecycle?.suspension?.preserve === Preserve.FILESYSTEM)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "boxd suspension always keeps memory; filesystem-only suspension is unavailable",
+        );
+
       // Unmet minimums reject before any provider IO.
       const vcpu = config.resources
         ? smallestSize("boxd", SIZES, config.resources).vcpus
