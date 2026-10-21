@@ -43,6 +43,7 @@ import {
   type RunloopClient,
   type Snapshot,
 } from "./transport";
+import { startRunloopProcess } from "./process";
 
 /** Prepared image value for Runloop's default Devbox image (no blueprint). */
 export const BASE_IMAGE = "runloop-default";
@@ -1216,6 +1217,22 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
             );
 
           return ctx.pending(token.data, { pollAfterMs: pollMs });
+        },
+      },
+      processes: {
+        supports: { sustainedOutput: true },
+        async start(input, ctx) {
+          await requireRunning(input.sandbox, ctx);
+
+          return startRunloopProcess(
+            {
+              native,
+              commandId: () => uuidv7(),
+              bounded: (signal, seconds) => signalFor(readContext(signal, seconds)),
+            },
+            input,
+            ctx,
+          );
         },
       },
       exec: {

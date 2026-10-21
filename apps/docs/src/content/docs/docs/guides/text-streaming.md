@@ -3,7 +3,7 @@ title: Streaming and interactive processes
 description: Read live process output, send input, check status, and stop a process.
 ---
 
-Use `sandbox.processes.start()` when you need live output from a build, worker or server. E2B and Daytona support the process features on this page through the same SDK methods; boxd supports streamed output and termination, Modal supports streamed output, piped input and signals, and Boat streams text (see [provider transport facts](#provider-transport-facts)). The examples assume you already have a `sandbox` handle; see [sandboxes and execution](/docs/guides/resources/).
+Use `sandbox.processes.start()` when you need live output from a build, worker or server. E2B and Daytona support the process features on this page through the same SDK methods; boxd supports streamed output and termination, Modal supports streamed output, piped input and signals, and Boat and Runloop stream text (see [provider transport facts](#provider-transport-facts)). The examples assume you already have a `sandbox` handle; see [sandboxes and execution](/docs/guides/resources/).
 
 Set `output: { mode: "stream" }` for long-running processes. Sandbar keeps a small queue of unread output, so read it as it arrives. Save chunks to your own log or storage if you need a complete transcript. Output defaults to UTF-8 text, with separate stdout and stderr. Use the [byte format](#original-output-bytes) for binary data, or a [terminal](#signals-and-explicit-terminals) for programs that need terminal behavior.
 
@@ -104,6 +104,8 @@ The supervisor tracks the child it launched. Termination does not delete a nativ
 **Modal** streams stdout and stderr from its command router as separate byte reads, and accepts piped input at exact offsets. The router has no kill call, so Sandbar launches the command through `/bin/sh`, which records its process ID in `/tmp` and then becomes the command. Signals and `terminate()` run `kill` against that ID in a second command; they reach the launched process, not its children. The image needs `/bin/sh`, `cat`, `kill` and a writable `/tmp`. `detach()` leaves the command running. Terminals, status checks and reopening are not supported.
 
 **Boat** starts the command detached and follows Boat's attach stream, which carries UTF-8 text with byte offsets. Boat ends each connection after 10 minutes, and the adapter reattaches from the offsets without losing or repeating output. Byte output, callback exec, input, terminals and signals other than `terminate()` are not supported. `terminate()` uses Boat's stop endpoint; `detach()` leaves the command running.
+
+**Runloop** follows its server-sent log streams for stdout and stderr, which carry UTF-8 text with byte offsets, and reopens a closed or dropped stream from its offset. Exit comes from Runloop's status long-poll; if the log streams have not closed 10 seconds after exit, output is reported incomplete. Byte output, callback exec, input, terminals and signals other than `terminate()` are not supported. `terminate()` kills the execution; `detach()` leaves it running.
 
 ## Finite compatibility and limits
 
