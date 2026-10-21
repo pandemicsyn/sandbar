@@ -268,7 +268,8 @@ export type E2BTransport = {
   ): Promise<{ items: E2BRecord[]; nextToken?: string }>;
   /** `memory: false` pauses filesystem-only; resume then cold-boots. */
   suspend?: (id: string, signal: AbortSignal, memory?: boolean) => Promise<void>;
-  resume?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
+  /** `memory: false` resumes from disk only, so the sandbox always boots fresh. */
+  resume?: (id: string, seconds: number, signal: AbortSignal, memory?: boolean) => Promise<void>;
   renew?: (id: string, seconds: number, signal: AbortSignal) => Promise<void>;
   kill(id: string, signal?: AbortSignal): Promise<boolean>;
   run(
@@ -435,7 +436,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
 
   async function lifecyclePost(
     path: string,
-    body: { memory: boolean } | { timeout: number },
+    body: { memory: boolean } | { timeout: number; memory?: false },
     signal: AbortSignal,
   ): Promise<void> {
     const response = await fetcher(`${E2B_ENDPOINT}${path}`, {
@@ -977,10 +978,10 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
     async suspend(id, signal, memory = true) {
       await lifecyclePost(`/sandboxes/${encodeURIComponent(id)}/pause`, { memory }, signal);
     },
-    async resume(id, seconds, signal) {
+    async resume(id, seconds, signal, memory = true) {
       await lifecyclePost(
         `/v2/sandboxes/${encodeURIComponent(id)}/connect`,
-        { timeout: seconds },
+        memory ? { timeout: seconds } : { timeout: seconds, memory: false },
         signal,
       );
     },

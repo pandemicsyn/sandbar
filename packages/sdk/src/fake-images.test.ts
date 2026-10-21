@@ -73,6 +73,8 @@ test("fake builds, lists, guards and deletes an owned image exactly once", async
 
     const page = await client.images.list({ limit: 10 });
     expect(page.coverage).toBe("provider-scope");
+    // Omitting the page selection uses the default page size.
+    expect((await client.images.list()).items).toEqual(page.items);
     expect(
       page.items.map((item) => [
         item.reference.nativeId,

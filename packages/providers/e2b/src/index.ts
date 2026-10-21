@@ -1581,6 +1581,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                     input.sandbox.id,
                     input.intent.action === "resume" ? input.intent.forSeconds! : 0,
                     ctx.signal,
+                    suspendFacts.memory,
                   );
                 } catch (error) {
                   if (error instanceof E2BLifecycleRejected)
@@ -1610,7 +1611,8 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 if (observation && observation.state === "running") {
                   const completed = {
                     reference: input.sandbox.reference,
-                    execution: "unknown" as const,
+                    // A disk-only resume always cold-boots; a memory resume may not restore.
+                    execution: suspendFacts.memory ? ("unknown" as const) : ("fresh" as const),
                     executionIdentity: unknownSandboxFacts().execution,
                     connections: "dropped" as const,
                     observation,

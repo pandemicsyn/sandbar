@@ -537,6 +537,31 @@ test("E2B suspend/resume native defaults and saved-reference workflow retain ide
   }
 });
 
+test("E2B filesystem-only configuration resumes from disk and reports fresh execution", async () => {
+  const f = fixture();
+
+  const { client, box } = await create(f, {
+    lifecycle: { lifetimeSeconds: 61, suspension: { preserve: "filesystem" } },
+  });
+
+  try {
+    await box.suspend();
+    expect(await box.resume()).toMatchObject({
+      execution: "fresh",
+      observation: { state: "running" },
+    });
+    expect(
+      f.calls
+        .filter(
+          (c) => c.method === "POST" && (c.path.endsWith("/pause") || c.path.endsWith("/connect")),
+        )
+        .map((c) => c.body),
+    ).toEqual([{ memory: false }, { timeout: 61, memory: false }]);
+  } finally {
+    await client.close();
+  }
+});
+
 test.each(["mounted", "transition", "missing", "policy"])(
   "E2B lifecycle gate %s rejects before POST",
   async (gate) => {
