@@ -155,7 +155,8 @@ export interface ModalTransport {
    * keeps Modal's default retention (30 days from creation). Throws {@link ModalCreateRejected}
    * only when the request provably made no image.
    */
-  snapshotFilesystem(sandboxId: string): Promise<string>;
+  /** `ttlMs` is the image lifetime from capture: omitted uses Modal's default, `null` never expires. */
+  snapshotFilesystem(sandboxId: string, ttlMs?: number | null): Promise<string>;
   /** Delete an image by ID; `missing` when Modal no longer has it. */
   deleteImage(imageId: string): Promise<"deleted" | "missing">;
   close(): void;
@@ -434,7 +435,7 @@ export function createSdkTransport(input: {
         throw error;
       }
     },
-    async snapshotFilesystem(sandboxId) {
+    async snapshotFilesystem(sandboxId, ttlMs) {
       const secrets = [input.tokenId, input.tokenSecret];
       let sandbox: Sandbox;
 
@@ -447,7 +448,7 @@ export function createSdkTransport(input: {
       // Modal 0.10.1 sends one TaskSnapshotFilesystem request with a fresh snapshot ID and
       // resends that same request only after DEADLINE_EXCEEDED or CANCELLED.
       try {
-        const image = await sandbox.snapshotFilesystem();
+        const image = await sandbox.snapshotFilesystem(ttlMs === undefined ? {} : { ttlMs });
 
         return image.imageId;
       } catch (error) {

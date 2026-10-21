@@ -52,8 +52,14 @@ const Configuration = z.strictObject({
   resources: ResourceMinimums.optional(),
   /** Modal allows sandboxes to run for up to 24 hours. */
   timeoutSeconds: z.coerce.number().int().min(60).max(86_400).default(900),
-  /** Modal filesystem snapshots keep files only; `filesystem+memory` rejects at connect. */
-  snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
+  snapshots: z
+    .strictObject({
+      /** Modal filesystem snapshots keep files only; `filesystem+memory` rejects at connect. */
+      preserve: PreserveSchema.optional(),
+      /** Seconds Modal keeps each snapshot image after capture; `0` keeps it until deleted. */
+      retentionSeconds: z.number().int().nonnegative().safe().optional(),
+    })
+    .optional(),
 });
 
 const Credentials = z.strictObject({
@@ -79,7 +85,8 @@ const DestroyToken = z.strictObject({ id: z.string().min(1).max(128) });
 /** Modal keeps a filesystem snapshot image for 30 days from creation, then deletes it. */
 const SNAPSHOT_RETENTION_SECONDS = 30 * 86_400;
 
-const snapshotProfile: SnapshotProfile = {
+/** The capture profile; `retentionSeconds` 0 keeps images until explicitly deleted. */
+const snapshotProfile = (retentionSeconds = SNAPSHOT_RETENTION_SECONDS): SnapshotProfile => ({
   id: "modal-filesystem",
   preserve: Preserve.FILESYSTEM,
   sourceStates: ["running"],
@@ -90,13 +97,8 @@ const snapshotProfile: SnapshotProfile = {
   consistency: "unknown",
   restoreExecution: "fresh",
   mountHandling: "none",
-  minimumRetentionSeconds: SNAPSHOT_RETENTION_SECONDS,
-};
-
-const snapshotSupport = {
-  status: "supported" as const,
-  value: { profiles: [snapshotProfile], defaultProfileId: snapshotProfile.id },
-};
+  minimumRetentionSeconds: retentionSeconds === 0 ? Number.MAX_SAFE_INTEGER : retentionSeconds,
+});
 
 /** A restored sandbox is an ordinary Modal create from the snapshot image. */
 const restoreSupport = {
@@ -179,6 +181,22 @@ export function createModalAdapter(
           "UNSUPPORTED",
           "Modal snapshots keep the filesystem only; memory snapshots are not supported",
         );
+
+      const retentionSeconds = config.snapshots?.retentionSeconds;
+      const profile = snapshotProfile(retentionSeconds);
+
+      const snapshotSupport = {
+        status: "supported" as const,
+        value: { profiles: [profile], defaultProfileId: profile.id },
+      };
+
+      // Modal's `ttlMs` is a hard cutoff from capture; `null` keeps the image indefinitely.
+      const ttlMs =
+        retentionSeconds === undefined
+          ? undefined
+          : retentionSeconds
+            ? retentionSeconds * 1000
+            : null;
 
       const options = { ...config, ...credentials };
       const transport = transportFactory?.(options) ?? createSdkTransport(options);
@@ -521,7 +539,7 @@ export function createModalAdapter(
             if (input.request.retention?.cleanupAfterSeconds !== undefined)
               throw new AdapterError(
                 "UNSUPPORTED",
-                "Modal snapshots keep the native 30-day retention; a custom cleanup is not supported",
+                "Set Modal snapshot expiry with snapshots.retentionSeconds in adapter setup",
               );
 
             return input;
@@ -530,15 +548,15 @@ export function createModalAdapter(
             let imageId: string;
 
             try {
-              imageId = await transport.snapshotFilesystem(input.sandbox.id);
+              imageId = await transport.snapshotFilesystem(input.sandbox.id, ttlMs);
             } catch (error) {
               if (error instanceof ModalCreateRejected)
                 return ctx.reject(error.code, error.message);
 
               // Modal names no image until the call returns, so a lost response leaves nothing to
-              // observe. Any image it made expires with Modal's 30-day retention.
+              // observe. Any image it made expires with the configured retention.
               return ctx.unknown(
-                "Modal filesystem snapshot response was not confirmed; any image it made expires in 30 days; do not replay",
+                "Modal filesystem snapshot response was not confirmed; any image it made expires with its retention; do not replay",
               );
             }
 
@@ -551,10 +569,10 @@ export function createModalAdapter(
               snapshot: snapshotInfo(reference, { id: input.sandbox.id, createdAt }),
               capture: {
                 preserve: "filesystem" as const,
-                interruption: snapshotProfile.interruption,
+                interruption: profile.interruption,
                 restoreExecution: "fresh" as const,
               },
-              source: { state: "running" as const, connections: snapshotProfile.connections },
+              source: { state: "running" as const, connections: profile.connections },
               retainedResources: [reference],
             };
           },

@@ -69,7 +69,7 @@ Close the connection in an outer `finally`, as in [Getting started](/docs/direct
 | Runloop                                            | Private disk                              | May pause briefly; keeps running          | Fresh processes; RAM is not retained             |
 | Boat                                               | Private disk                              | Keeps running; any pause is undocumented  | Fresh processes; RAM is not retained             |
 
-Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer. Modal keeps each snapshot for 30 days after capture and has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
+Daytona captures Linux VMs the same way as containers. It leaves an already-stopped source stopped. Configure `snapshots: { restartAfterCapture: false }` on the adapter to also leave a running source stopped after capture. E2B requires a running source with envd `v0.5.0` or newer. Modal has no snapshot listing, so save the returned reference; see the [Modal adapter notes](https://github.com/pandemicsyn/sandbar/tree/main/packages/providers/modal#snapshots).
 
 ```ts
 const captured = await source.snapshot({
@@ -89,6 +89,13 @@ const adapter = e2b({
   lifecycle: { suspension: { preserve: Preserve.FILESYSTEM } },
 });
 ```
+
+Snapshots cost storage until they are deleted or expire. Where the provider supports expiry, set it once in adapter setup with `snapshots: { retentionSeconds }`, using `0` for never:
+
+- **Vercel** counts from the snapshot's last use. The default is 30 days, and it applies in disposable mode only.
+- **Modal** counts from capture. The default is 30 days.
+
+Other adapters reject the setting at connect. Their providers keep snapshots until you delete them, except Daytona, which deactivates snapshots after two weeks without use. `snapshot({ retention: { minimumSeconds } })` checks against the configured expiry before capture.
 
 Pause application writers before capture if you need consistent data. Passing `consistency: "caller-quiesced"` records that you did so; Sandbar does not pause writers for you. Otherwise, consistency remains unknown unless the provider supplies evidence. `captured.capture` describes what was saved, and `captured.source` describes the source after capture.
 

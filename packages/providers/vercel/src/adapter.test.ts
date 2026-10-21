@@ -1286,6 +1286,40 @@ test("Vercel passes the shared snapshot suite", async () => {
   }
 });
 
+test("Vercel snapshot retention sets the native expiration and the retention guarantee", async () => {
+  for (const [retentionSeconds, expiration, minimum] of [
+    [14 * 86_400, 14 * 86_400_000, 14 * 86_400],
+    [0, 0, Number.MAX_SAFE_INTEGER],
+  ] as const) {
+    const native = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, snapshots: { retentionSeconds } },
+      credentials,
+    });
+
+    try {
+      const source = await client.sandboxes.create();
+      const check = await source.checkSnapshot({ retention: { minimumSeconds: minimum } });
+      expect(check.status).toBe("supported");
+      await source.snapshot();
+      const capture = native.requests.find((r) => r.url.pathname.endsWith("/snapshot"));
+      expect(JSON.parse(String(capture?.init.body))).toEqual({ expiration });
+    } finally {
+      await client.close();
+    }
+  }
+
+  const persistent = Sandbar.connect({
+    adapter: fixture().adapter,
+    config: { ...config, persistent: true, snapshots: { retentionSeconds: 60 } },
+    credentials,
+  });
+
+  await expect(persistent).rejects.toMatchObject({ code: "UNSUPPORTED" });
+});
+
 test("Vercel accepts filesystem-only preserve and rejects memory at connect before any call", async () => {
   const native = fixture();
 

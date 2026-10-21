@@ -12,6 +12,7 @@ function fixture() {
   const images = new Set(["im-base"]);
   const creates: Parameters<ModalTransport["create"]>[0][] = [];
   const effects = { snapshot: 0, delete: 0 };
+  const ttls: (number | null | undefined)[] = [];
   let nextSnapshot: "lose" | "reject" | undefined;
   let loseDelete = false;
 
@@ -52,8 +53,9 @@ function fixture() {
     async result() {
       return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
     },
-    async snapshotFilesystem(sandboxId) {
+    async snapshotFilesystem(sandboxId, ttlMs) {
       effects.snapshot++;
+      ttls.push(ttlMs);
 
       if (nextSnapshot === "reject") {
         nextSnapshot = undefined;
@@ -105,6 +107,7 @@ function fixture() {
     images,
     creates,
     effects,
+    ttls,
     connect,
     loseNextSnapshot() {
       nextSnapshot = "lose";
@@ -298,4 +301,33 @@ test("Modal passes the shared snapshot suite without listing", async () => {
   } finally {
     await client.close();
   }
+});
+
+test("Modal snapshot retention sets the native TTL from capture", async () => {
+  const native = fixture();
+
+  for (const retentionSeconds of [undefined, 3600, 0]) {
+    const client = await Sandbar.connect({
+      adapter: createModalAdapter(() => native.transport),
+      config: {
+        appName: "existing",
+        environment: "main",
+        image: "im-base",
+        snapshots: retentionSeconds === undefined ? {} : { retentionSeconds },
+      },
+      credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+    });
+
+    try {
+      const source = await client.sandboxes.create();
+      const longer = await source.checkSnapshot({ retention: { minimumSeconds: 31 * 86_400 } });
+      // Only "never expires" can guarantee more than the native or configured lifetime.
+      expect(longer.status === "supported").toBe(retentionSeconds === 0);
+      await source.snapshot();
+    } finally {
+      await client.close();
+    }
+  }
+
+  expect(native.ttls).toEqual([undefined, 3_600_000, null]);
 });

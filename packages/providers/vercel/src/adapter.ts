@@ -117,8 +117,17 @@ export const vercelConfig = z.strictObject({
     .default("vercel/sandbox/universal:latest"),
   timeoutSeconds: z.number().int().min(60).max(MAX_SESSION_SECONDS).default(900),
   persistent: z.boolean().default(false),
-  /** Vercel snapshots keep the filesystem only; `filesystem+memory` rejects at connect. */
-  snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
+  snapshots: z
+    .strictObject({
+      /** Vercel snapshots keep the filesystem only; `filesystem+memory` rejects at connect. */
+      preserve: PreserveSchema.optional(),
+      /**
+       * Seconds Vercel keeps each `snapshot()` capture after its last use; `0` never expires.
+       * Omitted keeps Vercel's 30-day default. Applies to disposable mode, where capture runs.
+       */
+      retentionSeconds: z.number().int().nonnegative().safe().optional(),
+    })
+    .optional(),
   network: policy.optional(),
   /** @deprecated Use `network`. */
   networkPolicy: policy.optional(),
@@ -270,6 +279,14 @@ export function createVercelAdapter(
         throw new AdapterError(
           "UNSUPPORTED",
           "Vercel snapshots keep the filesystem only; memory snapshots are not supported",
+        );
+
+      const retentionSeconds = config.snapshots?.retentionSeconds;
+
+      if (retentionSeconds !== undefined && config.persistent)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "snapshots.retentionSeconds applies to snapshot(), which needs disposable mode",
         );
 
       if (config.network !== undefined && config.networkPolicy !== undefined)
@@ -1166,6 +1183,11 @@ export function createVercelAdapter(
         mountHandling: "none",
       };
 
+      // Expiry counts from last use, so a capture lasts at least this long.
+      if (retentionSeconds !== undefined)
+        profile.minimumRetentionSeconds =
+          retentionSeconds === 0 ? Number.MAX_SAFE_INTEGER : retentionSeconds;
+
       const snapshotSchema = z.object({
         id,
         sourceSessionId: id,
@@ -1763,7 +1785,10 @@ export function createVercelAdapter(
             if (plan.status !== "supported") throw new AdapterError("UNSUPPORTED", plan.reason);
 
             if (input.request.retention?.cleanupAfterSeconds !== undefined)
-              throw new AdapterError("UNSUPPORTED", "Scheduled snapshot deletion is unavailable");
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "Set Vercel snapshot expiry with snapshots.retentionSeconds in adapter setup",
+              );
 
             return input;
           },
@@ -1774,7 +1799,7 @@ export function createVercelAdapter(
               route(input.sandbox.id) + "/snapshot",
               signal,
               z.object({ snapshot: z.object({ id }).passthrough() }).passthrough(),
-              {},
+              retentionSeconds === undefined ? {} : { expiration: retentionSeconds * 1000 },
             );
 
             const token = {
