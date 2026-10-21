@@ -30,13 +30,13 @@ Create an API key in the Boat dashboard. `connect` verifies it with `GET /me` an
 
 ## Setup
 
-| Setting                     | Default        | Notes                                                                                                                                                                                             |
-| --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `network`                   | required       | Must be `"internet"`. Boat has no provider-level egress controls, so blocked or allowlisted creates fail before anything is allocated.                                                            |
-| `image`                     | `ubuntu-24.04` | Boat's stock Ubuntu 24.04 machine. Any other value is a Boat named snapshot (`my-base`) or a `bsh_` share code, sent as `from`. OCI images are unsupported.                                       |
-| `resources`                 | `default` type | Minimum `{ vcpus, memoryMiB }`. Picks the smallest of `small` (2 vCPU, 4 GiB), `default` (4, 8 GiB), `large` (8, 16 GiB) or `xlarge` (16, 32 GiB; plan-dependent). Deprecated alias: `machine`.   |
-| `environment`               | none           | Name of a Boat environment to attach. **Omitted, sandboxes start with `noEnv`: none of your account's variables, secret files or logins.** Name an environment only for code you trust with them. |
-| `lifecycle.lifetimeSeconds` | 900            | 60 seconds to 30 days. Boat archives (not deletes) the sandbox when it expires; `renew()` moves the deadline. The timer counts from create or resume, not from activity.                          |
+| Setting                     | Default        | Notes                                                                                                                                                                                                                         |
+| --------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `network`                   | required       | Must be `"internet"`. Boat has no provider-level egress controls, so blocked or allowlisted creates fail before anything is allocated.                                                                                        |
+| `image`                     | `ubuntu-24.04` | Boat's stock Ubuntu 24.04 machine. Any other value is a Boat named snapshot (`my-base`) or a `bsh_` share code, sent as `from`. OCI images are unsupported.                                                                   |
+| `resources`                 | `default` type | Minimum `{ vcpus, memoryMiB }`. Picks the smallest of `small` (2 vCPU, 4 GiB), `default` (4, 8 GiB), `large` (8, 16 GiB) or `xlarge` (16, 32 GiB; plan-dependent). Deprecated alias: `machine`.                               |
+| `environment`               | none           | Name of a Boat environment to attach. **Omitted, sandboxes start with `noEnv`: none of your account's variables, secret files or logins.** Name an environment only for code you trust with them.                             |
+| `lifecycle.lifetimeSeconds` | 900            | 60 seconds to 30 days. Boat archives (not deletes) the sandbox when it expires; `renew()` moves the deadline. The timer counts from create or resume, not from activity. `create({ lifecycle })` can override it per sandbox. |
 
 Boat runs sandboxes in the EU (Germany, Finland, France) and does not let you pick a region, so `region` and `labels` are rejected. Mounts, snapshot requirements and image builds are unsupported.
 

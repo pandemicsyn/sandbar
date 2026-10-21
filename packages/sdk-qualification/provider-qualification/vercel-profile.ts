@@ -137,7 +137,7 @@ export default defineProviderProfile({
           projectId: config.projectId,
           region: config.region,
           image: config.imageId,
-          timeoutSeconds: config.nativeLifetimeSeconds,
+          lifecycle: { lifetimeSeconds: config.nativeLifetimeSeconds },
           networkPolicy: config.networkPolicy,
         },
         credentials: { token: credentials.VERCEL_TOKEN },

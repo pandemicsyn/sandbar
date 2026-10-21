@@ -9,6 +9,7 @@ import {
   AdapterCheckpointError,
   AdapterError,
   assertResourceScope,
+  DEFAULT_LIFETIME_SECONDS,
   defineAdapter,
   ResourceMinimums,
   sandboxReference,
@@ -80,9 +81,14 @@ const Configuration = z
     lifecycle: z
       .strictObject({
         /** Auto-archive after this many seconds; renew extends it. */
-        lifetimeSeconds: z.number().int().min(60).max(MAX_TTL_SECONDS).default(900),
+        lifetimeSeconds: z
+          .number()
+          .int()
+          .min(60)
+          .max(MAX_TTL_SECONDS)
+          .default(DEFAULT_LIFETIME_SECONDS),
       })
-      .default({ lifetimeSeconds: 900 }),
+      .default({ lifetimeSeconds: DEFAULT_LIFETIME_SECONDS }),
   })
   .superRefine((value, ctx) => {
     if (value.resources !== undefined && value.machine !== undefined)
@@ -419,6 +425,7 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
           network: ["internet"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_OUTPUT_BYTES },
           fileWrite: { overwrite: true, noClobber: false },
+          lifetime: { minSeconds: 60, maxSeconds: MAX_TTL_SECONDS },
         },
         create: {
           recovery: { version: 1, token: CreateToken },
@@ -460,7 +467,7 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
             try {
               const request: CreateSandboxRequest = {
                 type: machine,
-                ttlSeconds: config.lifecycle.lifetimeSeconds,
+                ttlSeconds: input.lifetimeSeconds ?? config.lifecycle.lifetimeSeconds,
               };
 
               if (input.image.value !== BASE_IMAGE) request.from = input.image.value;

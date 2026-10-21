@@ -11,6 +11,7 @@ import {
   Preserve,
   PreserveSchema,
   assertResourceScope,
+  DEFAULT_LIFETIME_SECONDS,
   defineAdapter,
   resolveSnapshot,
   ResourceMinimums,
@@ -70,11 +71,14 @@ const Configuration = z
     resources: ResourceMinimums.optional(),
     /** @deprecated Use `resources: { vcpus }`. */
     size: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(8)]).optional(),
-    lifetimeSeconds: z.number().int().min(60).safe().default(900),
+    /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
+    lifetimeSeconds: z.number().int().min(60).safe().optional(),
     /** boxd snapshots always keep memory; only `Preserve.FILESYSTEM_AND_MEMORY` is accepted. */
     snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
     lifecycle: z
       .strictObject({
+        /** Delete the machine this many seconds after creation; under a minute rounds up to 60. */
+        lifetimeSeconds: z.number().int().positive().safe().optional(),
         /** boxd pause always keeps memory; only `Preserve.FILESYSTEM_AND_MEMORY` is accepted. */
         suspension: z.strictObject({ preserve: PreserveSchema }).optional(),
       })
@@ -98,6 +102,13 @@ const Configuration = z
         message: "Supply resources or the deprecated size, not both",
       });
 
+    if (value.lifecycle?.lifetimeSeconds !== undefined && value.lifetimeSeconds !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["lifecycle", "lifetimeSeconds"],
+        message: "Supply lifecycle.lifetimeSeconds or the deprecated lifetimeSeconds, not both",
+      });
+
     if ((value.network === undefined) === (value.networkPolicy === undefined))
       ctx.addIssue({
         code: "custom",
@@ -105,10 +116,18 @@ const Configuration = z
         message: 'Configure network: "internet"; boxd does not offer blocked egress',
       });
   })
-  .transform(({ network, ...value }) => ({
+  .transform(({ network, lifetimeSeconds, ...value }) => ({
     ...value,
     networkPolicy: network ?? value.networkPolicy ?? "internet",
+    lifetimeSeconds: machineLifetime(
+      value.lifecycle?.lifetimeSeconds ?? lifetimeSeconds ?? DEFAULT_LIFETIME_SECONDS,
+    ),
   }));
+
+/** boxd machines get at least a minute; shorter lifetimes round up to it. */
+function machineLifetime(seconds: number): number {
+  return Math.max(60, seconds);
+}
 
 /** boxd size classes, smallest first: each vCPU comes with 4 GiB of memory. */
 const SIZES = [1, 2, 4, 8].map((vcpus) => ({ vcpus, memoryMiB: vcpus * 4096 }));
@@ -521,10 +540,15 @@ export function createBoxdAdapter(
       /** Create from an image, or restore an exact snapshot generation; then expiry and readiness. */
       const launch = async (
         source:
-          | { image: string; mounts: MountSpec[] }
+          | { image: string; mounts: MountSpec[]; lifetimeSeconds?: number }
           | { snapshot: { id: string; version: number } },
         ctx: AttemptContext<Created>,
       ) => {
+        const lifetimeSeconds =
+          "image" in source && source.lifetimeSeconds !== undefined
+            ? machineLifetime(source.lifetimeSeconds)
+            : config.lifetimeSeconds;
+
         const mounts = "image" in source ? source.mounts : [];
         const expected = "snapshot" in source ? source.snapshot : undefined;
         const partial = expected ? partialRestore : partialCreate;
@@ -620,7 +644,7 @@ export function createBoxdAdapter(
 
         try {
           const expiry = await native.run(readContext(ctx.signal), () =>
-            native.machines.setDeleteAfter(token.id, config.lifetimeSeconds),
+            native.machines.setDeleteAfter(token.id, lifetimeSeconds),
           );
 
           if (!expiry)
@@ -901,6 +925,7 @@ export function createBoxdAdapter(
           network: ["internet"],
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
+          lifetime: { minSeconds: 1, maxSeconds: Number.MAX_SAFE_INTEGER },
         },
         create: {
           recovery: { version: 1, token: CreateToken },
@@ -920,7 +945,14 @@ export function createBoxdAdapter(
             return input;
           },
           submit: (input, ctx) =>
-            launch({ image: input.image.value, mounts: input.mounts ?? [] }, ctx),
+            launch(
+              {
+                image: input.image.value,
+                mounts: input.mounts ?? [],
+                lifetimeSeconds: input.lifetimeSeconds,
+              },
+              ctx,
+            ),
           observe: (attempt, ctx) => observeLaunch(attempt, ctx),
         },
         async inspect(box, ctx) {

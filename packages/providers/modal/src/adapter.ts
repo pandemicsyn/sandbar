@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import {
   AdapterError,
   assertResourceScope,
+  defaultLifetime,
   defineAdapter,
   Preserve,
   PreserveSchema,
@@ -31,30 +32,53 @@ const ModalImageId = z.string().regex(/^im-[A-Za-z0-9_-]+$/, "Use an existing Mo
 /** Works with every adapter feature: it has a POSIX shell, coreutils and Python. */
 const DEFAULT_IMAGE = { kind: "oci" as const, value: "python:3.12-slim" };
 
-const Configuration = z.strictObject({
-  appName: z.string().min(1).max(128),
-  environment: z.string().min(1).max(128),
-  region: z.string().min(1).max(128).optional(),
-  /** Default for creates without an image: an `im-` ID, or a prepared or OCI image. */
-  image: z
-    .union([
-      ModalImageId.transform((value) => ({ kind: "prepared" as const, value })),
-      z.discriminatedUnion("kind", [
-        z.strictObject({ kind: z.literal("prepared"), value: ModalImageId }),
-        z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
-      ]),
-    ])
-    .default(DEFAULT_IMAGE),
-  /**
-   * Minimum size, reserved exactly: `vcpus` becomes Modal's CPU reservation (fractions allowed) and
-   * `memoryMiB` its memory reservation. Unset dimensions take Modal's defaults.
-   */
-  resources: ResourceMinimums.optional(),
-  /** Modal allows sandboxes to run for up to 24 hours. */
-  timeoutSeconds: z.coerce.number().int().min(60).max(86_400).default(900),
-  /** Modal filesystem snapshots keep files only; `filesystem+memory` rejects at connect. */
-  snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
-});
+/** Modal allows sandboxes to run for up to 24 hours. */
+const MAX_LIFETIME_SECONDS = 86_400;
+
+const Configuration = z
+  .strictObject({
+    appName: z.string().min(1).max(128),
+    environment: z.string().min(1).max(128),
+    region: z.string().min(1).max(128).optional(),
+    /** Default for creates without an image: an `im-` ID, or a prepared or OCI image. */
+    image: z
+      .union([
+        ModalImageId.transform((value) => ({ kind: "prepared" as const, value })),
+        z.discriminatedUnion("kind", [
+          z.strictObject({ kind: z.literal("prepared"), value: ModalImageId }),
+          z.strictObject({ kind: z.literal("oci"), value: z.string().min(1).max(1024) }),
+        ]),
+      ])
+      .default(DEFAULT_IMAGE),
+    /**
+     * Minimum size, reserved exactly: `vcpus` becomes Modal's CPU reservation (fractions allowed) and
+     * `memoryMiB` its memory reservation. Unset dimensions take Modal's defaults.
+     */
+    resources: ResourceMinimums.optional(),
+    lifecycle: z
+      .strictObject({
+        /** Wall-clock lifetime; Modal allows sandboxes to run for up to 24 hours. */
+        lifetimeSeconds: z.coerce.number().int().min(1).max(MAX_LIFETIME_SECONDS).optional(),
+      })
+      .optional(),
+    /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
+    timeoutSeconds: z.coerce.number().int().min(60).max(MAX_LIFETIME_SECONDS).optional(),
+    /** Modal filesystem snapshots keep files only; `filesystem+memory` rejects at connect. */
+    snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.lifecycle?.lifetimeSeconds !== undefined && value.timeoutSeconds !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["lifecycle", "lifetimeSeconds"],
+        message: "Supply lifecycle.lifetimeSeconds or the deprecated timeoutSeconds, not both",
+      });
+  })
+  .transform(({ timeoutSeconds, ...value }) => ({
+    ...value,
+    lifetimeSeconds:
+      value.lifecycle?.lifetimeSeconds ?? timeoutSeconds ?? defaultLifetime(MAX_LIFETIME_SECONDS),
+  }));
 
 const Credentials = z.strictObject({
   tokenId: z.string().min(1),
@@ -122,6 +146,7 @@ type PreparedCreate = {
   ociReference?: string | undefined;
   labels: Record<string, string>;
   env?: Record<string, string> | undefined;
+  lifetimeSeconds?: number | undefined;
 };
 
 /** Modal does not report reservations back, so the adapter records the full one in a tag. */
@@ -165,7 +190,6 @@ export function createModalAdapter(
     appName: string;
     environment: string;
     region?: string;
-    timeoutSeconds: number;
   }) => ModalTransport,
 ) {
   return defineAdapter({
@@ -304,7 +328,7 @@ export function createModalAdapter(
               sandbar_submission: ctx.submissionId,
               sandbar_operation: ctx.operationId,
             },
-            timeoutMs: config.timeoutSeconds * 1000,
+            timeoutMs: (input.lifetimeSeconds ?? config.lifetimeSeconds) * 1000,
           };
 
           if (config.resources?.vcpus !== undefined) request.cpu = config.resources.vcpus;
@@ -382,6 +406,7 @@ export function createModalAdapter(
           exec: { commands: ["argv", "shell"], maxOutputBytes: MAX_BYTES },
           fileWrite: { overwrite: true, noClobber: true },
           createEnv: true,
+          lifetime: { minSeconds: 1, maxSeconds: MAX_LIFETIME_SECONDS },
         },
         create: {
           async prepare(input) {
@@ -415,6 +440,7 @@ export function createModalAdapter(
               ociReference: input.image.kind === "oci" ? input.image.value : undefined,
               labels: input.labels ?? {},
               env: input.env,
+              lifetimeSeconds: input.lifetimeSeconds,
             };
           },
           submit: submitCreate,

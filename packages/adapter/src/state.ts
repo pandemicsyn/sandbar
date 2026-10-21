@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AdapterError } from "./errors";
+import { LifetimeLimits, lifetimeProblem } from "./lifetime";
 import type { CreateInput, ReadContext, RuntimeSession, Sandbox } from "./index";
 
 export const ResourceKind = z.enum([
@@ -862,6 +863,9 @@ export async function checkCreate(
       status: "unsupported",
       reason: "Create-time environment variables are unsupported by this adapter",
     };
+  const lifetime = lifetimeProblem(session.supports.lifetime, input.lifetimeSeconds);
+
+  if (lifetime) return { status: "unsupported", reason: lifetime };
 
   // Read-only capability hooks never need (possibly secret) environment values.
   const { env: _env, ...probe } = input;
@@ -945,6 +949,8 @@ export const DirectCapabilities = z.strictObject({
   network: z.array(z.string()),
   /** `create({ env })` sets sandbox-wide environment variables on this connection. */
   createEnv: z.boolean().optional(),
+  /** Per-create `lifecycle.lifetimeSeconds` range on this connection; null when only setup sets it. */
+  lifetime: LifetimeLimits.nullable().optional(),
   exec: z.boolean(),
   inspect: z.boolean(),
   inventory: z.boolean(),

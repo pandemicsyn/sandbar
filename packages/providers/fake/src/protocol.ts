@@ -48,6 +48,7 @@ export const FakeAction = z.discriminatedUnion("kind", [
     networkPolicy: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
     env: CreateEnv.optional(),
+    lifetimeSeconds: z.number().int().positive().safe().optional(),
   }),
   z.strictObject({ kind: z.literal("inspect"), ref: SandboxRef }),
   z.strictObject({

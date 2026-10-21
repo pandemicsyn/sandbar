@@ -2416,6 +2416,7 @@ export class AdapterDirectClient {
       images: [...support.images],
       imageBuild: !!this.session.imageBuild,
       createEnv: !!support.createEnv,
+      lifetime: support.lifetime ? { ...support.lifetime } : null,
       network: [...support.network],
       exec: !!this.session.exec && !!support.exec,
       inspect: !!this.session.inspect,
@@ -2470,6 +2471,7 @@ export class AdapterDirectClient {
           requirements: request.requirements,
           mounts: request.mounts,
           env: request.env,
+          lifetimeSeconds: request.lifecycle?.lifetimeSeconds,
         },
         { signal, deadline: Date.now() + 30_000 },
       ),
@@ -2535,6 +2537,7 @@ export class AdapterDirectClient {
         requirements: request.requirements,
         mounts: request.mounts,
         env: request.env,
+        lifetimeSeconds: request.lifecycle?.lifetimeSeconds,
       },
       (result, ref) => {
         if (result.kind !== "completed" || !("id" in result.value)) throw asUnknown(ref);

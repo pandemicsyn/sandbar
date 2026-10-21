@@ -120,6 +120,14 @@ test("create sends the submission as Idempotency-Key, withholds account secrets 
       ttlSeconds: 120,
       environment: "ci",
     });
+
+    await (await configured.sandboxes.create({ lifecycle: { lifetimeSeconds: 3600 } })).destroy();
+    expect(other.calls.filter((call) => call.path === "/sandboxes").at(-1)?.body).toMatchObject({
+      ttlSeconds: 3600,
+    });
+    await expect(
+      configured.sandboxes.create({ lifecycle: { lifetimeSeconds: 30 } }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
   } finally {
     await configured.close();
   }

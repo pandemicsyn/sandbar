@@ -78,6 +78,11 @@ export type CreateInput = {
    * never saved in recovery references or included in errors and telemetry.
    */
   env?: Record<string, string>;
+  /**
+   * Lifetime for this sandbox only, replacing the adapter setup's `lifecycle.lifetimeSeconds`.
+   * An adapter that cannot apply it exactly (or by rounding up) rejects before any effect.
+   */
+  lifecycle?: { lifetimeSeconds?: number };
 };
 
 export type ExecInput = {
@@ -393,6 +398,9 @@ export function validateCreate(
       region: z.string().min(1).max(128).optional(),
       labels: z.record(z.string(), z.string()).optional(),
       env: CreateEnv.optional(),
+      lifecycle: z
+        .strictObject({ lifetimeSeconds: z.number().int().positive().safe().optional() })
+        .optional(),
     })
     .safeParse(input === undefined ? {} : input);
 

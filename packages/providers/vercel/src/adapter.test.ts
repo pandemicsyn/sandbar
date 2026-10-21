@@ -125,10 +125,7 @@ export function fixture() {
 
         if (createStatus !== 200) return json(createError, createStatus);
         const input = JSON.parse(String(init.body));
-        expect(input).toMatchObject({
-          projectId: "project-fixture",
-          timeout: 900000,
-        });
+        expect(input).toMatchObject({ projectId: "project-fixture" });
         expect(input.tags.sandbarSubmission).toBeString();
 
         const session = {
@@ -1354,6 +1351,61 @@ test("Vercel resources pick the smallest vCPU count and inspect reports the sess
     }),
   ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   expect(native.requests).toHaveLength(before);
+});
+
+test("Vercel session lifetime comes from lifecycle, the deprecated timeoutSeconds or a per-create override", async () => {
+  const timeouts = async (
+    setup: { lifecycle?: { lifetimeSeconds: number }; timeoutSeconds?: number },
+    ...lifetimes: (number | undefined)[]
+  ) => {
+    const native = fixture();
+
+    const client = await Sandbar.connect({
+      adapter: native.adapter,
+      config: { ...config, ...setup },
+      credentials,
+    });
+
+    try {
+      for (const lifetimeSeconds of lifetimes)
+        await client.sandboxes.create(
+          lifetimeSeconds === undefined ? undefined : { lifecycle: { lifetimeSeconds } },
+        );
+
+      return native.requests
+        .filter((r) => r.url.pathname === "/api/v3/sandboxes")
+        .map((r) => JSON.parse(String(r.init.body)).timeout);
+    } finally {
+      await client.close();
+    }
+  };
+
+  expect(await timeouts({}, undefined)).toEqual([900_000]);
+  expect(await timeouts({ lifecycle: { lifetimeSeconds: 3600 } }, undefined)).toEqual([3_600_000]);
+  expect(await timeouts({ timeoutSeconds: 600 }, undefined)).toEqual([600_000]);
+  // Under a minute rounds up to Vercel's minimum session timeout.
+  expect(await timeouts({}, 1800, 20)).toEqual([1_800_000, 60_000]);
+
+  await expect(
+    Sandbar.connect({
+      adapter: fixture().adapter,
+      config: { ...config, timeoutSeconds: 600, lifecycle: { lifetimeSeconds: 600 } },
+      credentials,
+    }),
+  ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+
+  // Resumed persistent sessions are checked against the setup lifetime, so no override.
+  const client = await Sandbar.connect({
+    adapter: fixture().adapter,
+    config: { ...config, persistent: true },
+    credentials,
+  });
+
+  try {
+    expect((await client.capabilities()).lifetime).toBeNull();
+  } finally {
+    await client.close();
+  }
 });
 
 test("Vercel incremental writes publish exact bytes once and retain no-clobber collisions", async () => {

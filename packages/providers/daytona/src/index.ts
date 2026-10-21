@@ -938,6 +938,8 @@ export class DaytonaDriver implements ProviderDriver {
     mounts?: import("@sandbar-sdk/adapter").MountSpec[];
     /** Native sandbox-wide environment; never copied into results or messages. */
     env?: Record<string, string>;
+    /** This sandbox's lifetime in minutes; omitted uses the configured one. */
+    ttlMinutes?: number;
     signal?: AbortSignal;
   }): Promise<DaytonaCreateResult> {
     this.sameScope(input.scope);
@@ -1103,7 +1105,7 @@ export class DaytonaDriver implements ProviderDriver {
           mountPath: mount.path,
           subpath: mount.subpath,
         })),
-        ttlMinutes: this.config.configuration.ttlMinutes,
+        ttlMinutes: input.ttlMinutes ?? this.config.configuration.ttlMinutes,
         autoStopInterval: this.config.configuration.autoStopMinutes,
       };
 
