@@ -1,7 +1,7 @@
 import { filesystem, directoryValue, statValue } from "./filesystem";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { Disk, Machine } from "@boxd-sh/sdk";
+import { NotFoundError, type Disk, type Machine, type Snapshot } from "@boxd-sh/sdk";
 import {
   AdapterError,
   AdapterFilesystemError,
@@ -10,6 +10,7 @@ import {
   AdapterCheckpointError,
   assertResourceScope,
   defineAdapter,
+  resolveSnapshot,
   ResourceMinimums,
   sandboxReference,
   smallestSize,
@@ -18,13 +19,18 @@ import {
   type AttemptContext,
   type CreateInput,
   type DestroyInput,
+  type MountSpec,
   type Fact,
+  type ObserveContext,
   type ReadContext,
+  type RecoveryAttempt,
   type ResourceReference,
   type Sandbox,
   type SandboxInfo,
   type SandboxResources,
   type SandboxState,
+  type SnapshotInfo,
+  type SnapshotProfile,
   type VolumeInfo,
 } from "@sandbar-sdk/adapter";
 import {
@@ -112,6 +118,24 @@ const DestroyToken = z.strictObject({
 
 const DiskToken = z.strictObject({ id: Id });
 
+const SnapshotId = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_.:-]+$/);
+
+const Generation = z.number().int().positive().safe();
+
+/** The deterministic per-attempt name is checkpointed before capture so a lost response can be found. */
+const CaptureToken = z.strictObject({
+  name: z.string().regex(/^sandbar-snapshot-[0-9a-f]{24}$/),
+  source: Id,
+  id: SnapshotId.optional(),
+  version: Generation.optional(),
+});
+
+const SnapshotDeleteToken = z.strictObject({ id: SnapshotId });
+
 type Created = z.infer<typeof CreateToken>;
 
 type DestroyPrepared = DestroyInput & { mounts: { id: string; path: string }[] };
@@ -148,6 +172,44 @@ function machineSize(machine: Machine): Fact<SandboxResources> {
 function nativeName(submission: string): string {
   return `sandbar-${createHash("sha256").update(submission).digest("hex").slice(0, 24)}`;
 }
+
+/**
+ * A boxd snapshot name holds only its latest version, so every capture gets its own name;
+ * the reference also pins the captured version as its generation.
+ */
+function snapshotName(submission: string): string {
+  return `sandbar-snapshot-${createHash("sha256").update(submission).digest("hex").slice(0, 24)}`;
+}
+
+/** Memory and disk are captured together during a brief pause; the source keeps running. */
+const profile: SnapshotProfile = {
+  id: "boxd-memory",
+  preserve: "filesystem+memory",
+  sourceStates: ["running"],
+  interruption: "pause",
+  sourceAfter: "unchanged",
+  // boxd does not document what the pause does to open connections; claim nothing.
+  connections: "unknown",
+  consistency: "unknown",
+  restoreExecution: "resume",
+  mountHandling: "none",
+};
+
+const snapshotSupport = {
+  status: "supported" as const,
+  value: { profiles: [profile], defaultProfileId: profile.id },
+};
+
+/** Restores replay the captured size and network and cannot attach disks. */
+const restoreSupport = {
+  networkPolicies: ["internet"],
+  resources: false,
+  mounts: false,
+  independentLifecycle: true,
+};
+
+const REPLACED =
+  "boxd restored a machine from a different snapshot version; inspect it without replay";
 
 function readContext(signal: AbortSignal, seconds = 30): ReadContext {
   return { signal, deadline: Date.now() + seconds * 1000 };
@@ -352,11 +414,28 @@ export function createBoxdAdapter(
         },
       });
 
-      const checkpointCreate = async (token: Created, ctx: AttemptContext<Created>) => {
+      const partialRestore = (
+        token: Created,
+        identity: { operationId: string; submissionId: string },
+      ) => ({
+        kind: "snapshot_restore" as const,
+        status: "unknown" as const,
+        sandbox: sandboxReference("boxd", scope, token.id, {
+          operation: identity.operationId,
+          submission: identity.submissionId,
+        }),
+        mounts: [],
+      });
+
+      const checkpointCreate = async (
+        token: Created,
+        ctx: AttemptContext<Created>,
+        partial: typeof partialCreate | typeof partialRestore = partialCreate,
+      ) => {
         try {
           await ctx.checkpoint(token);
         } catch (error) {
-          if (error instanceof AdapterCheckpointError) error.outcome = partialCreate(token, ctx);
+          if (error instanceof AdapterCheckpointError) error.outcome = partial(token, ctx);
           throw error;
         }
       };
@@ -365,7 +444,8 @@ export function createBoxdAdapter(
         token: Created,
         creation: { operation: string; submission: string },
         ctx: ReadContext,
-        mounts: import("@sandbar-sdk/adapter").MountSpec[],
+        mounts: MountSpec[],
+        expected?: { id: string; version: number },
       ) => {
         const machine = await find(token.id, ctx);
 
@@ -378,6 +458,15 @@ export function createBoxdAdapter(
             "CONFLICT",
             "boxd create UUID no longer matches the acknowledged attempt",
           );
+
+        // boxd restores by snapshot id, which always names its latest version.
+        if (
+          expected &&
+          (machine.source?.kind !== "snapshot" ||
+            machine.source.id !== expected.id ||
+            machine.source.version !== expected.version)
+        )
+          return "replaced" as const;
 
         if (mounts.length) {
           const available = await disks(ctx);
@@ -402,6 +491,373 @@ export function createBoxdAdapter(
           reference: sandboxReference("boxd", scope, token.id, creation),
           state: "running" as const,
           mounts,
+        };
+      };
+
+      /** Create from an image, or restore an exact snapshot generation; then expiry and readiness. */
+      const launch = async (
+        source:
+          | { image: string; mounts: MountSpec[] }
+          | { snapshot: { id: string; version: number } },
+        ctx: AttemptContext<Created>,
+      ) => {
+        const mounts = "image" in source ? source.mounts : [];
+        const expected = "snapshot" in source ? source.snapshot : undefined;
+        const partial = expected ? partialRestore : partialCreate;
+
+        const proxies =
+          config.preview.access === "public"
+            ? config.preview.ports.map((port) => ({ name: `sandbar-${port}`, port }))
+            : undefined;
+
+        let machine: Machine;
+        let acknowledged: Created | undefined;
+
+        try {
+          machine = await native.run(
+            {
+              ...readContext(ctx.signal),
+              onCreate: async (id) => {
+                acknowledged = {
+                  id: Id.parse(id),
+                  stage: "created",
+                };
+                await checkpointCreate(acknowledged, ctx, partial);
+              },
+            },
+            () =>
+              native.machines.create(
+                "image" in source
+                  ? {
+                      image: source.image,
+                      name: nativeName(ctx.submissionId),
+                      org: org.slug,
+                      isolated: true,
+                      config: {
+                        vcpu,
+                        proxies,
+                        autoSuspendTimeout: 0,
+                        volumes: source.mounts.map((mount) => ({
+                          diskId: mount.volume.nativeId,
+                          mountPath: mount.path,
+                          readOnly: mount.access === "read-only",
+                        })),
+                      },
+                    }
+                  : {
+                      // A restore replays the captured size; boxd refuses sizing here.
+                      fromSnapshot: source.snapshot.id,
+                      name: nativeName(ctx.submissionId),
+                      org: org.slug,
+                      isolated: true,
+                      config: { proxies, autoSuspendTimeout: 0 },
+                    },
+              ),
+          );
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) throw error;
+
+          if (acknowledged)
+            return ctx.unknown(
+              "boxd machine exists; creation metadata could not be verified",
+              partial(acknowledged, ctx),
+            );
+          const rejected = createRejection(error, [credentials.apiKey]);
+
+          return rejected
+            ? ctx.reject(rejected.code, rejected.message)
+            : ctx.unknown("boxd create response was not confirmed; do not replay");
+        }
+
+        if (!Id.safeParse(machine.id).success)
+          return acknowledged
+            ? ctx.unknown(
+                "boxd machine exists; creation metadata has no usable machine UUID",
+                partial(acknowledged, ctx),
+              )
+            : ctx.unknown("boxd create acknowledgement has no usable machine UUID");
+
+        const token: Created = acknowledged ?? {
+          id: machine.id,
+          stage: "created",
+        };
+
+        if (!acknowledged) await checkpointCreate(token, ctx, partial);
+
+        if (
+          machine.id !== token.id ||
+          machine.org?.id !== org.id ||
+          machine.name !== nativeName(ctx.submissionId)
+        )
+          return ctx.unknown(
+            "boxd machine exists; creation metadata differs from the acknowledged attempt",
+            partial(token, ctx),
+          );
+
+        try {
+          const expiry = await native.run(readContext(ctx.signal), () =>
+            native.machines.setDeleteAfter(token.id, config.lifetimeSeconds),
+          );
+
+          if (!expiry)
+            return ctx.unknown(
+              "boxd machine exists; expiry was not acknowledged",
+              partial(token, ctx),
+            );
+          token.stage = "expiry-installed";
+        } catch {
+          return ctx.unknown(
+            "boxd machine exists; expiry response is unconfirmed",
+            partial(token, ctx),
+          );
+        }
+
+        await checkpointCreate(token, ctx, partial);
+
+        try {
+          await requireMachine({ id: token.id }, readContext(ctx.signal));
+
+          if (config.preview.access === "public")
+            await native.run(readContext(ctx.signal), () =>
+              native.machines.setBotProtection(token.id, false),
+            );
+          await native.run({ ...readContext(ctx.signal), maxBytes: 32 }, () =>
+            native.machines.waitUntilReady(token.id, { timeout: 30000, pollInterval: 500 }),
+          );
+          token.stage = "ready";
+        } catch {
+          return ctx.unknown(
+            "boxd machine exists but guest readiness was not confirmed; inspect without replay",
+            partial(token, ctx),
+          );
+        }
+
+        await checkpointCreate(token, ctx, partial);
+
+        try {
+          const result = await createdResult(
+            token,
+            { operation: ctx.operationId, submission: ctx.submissionId },
+            readContext(ctx.signal),
+            mounts,
+            expected,
+          );
+
+          return result === "replaced"
+            ? ctx.unknown(REPLACED, partial(token, ctx))
+            : (result ?? ctx.pending(token, { pollAfterMs: 500 }));
+        } catch {
+          return ctx.pending(token);
+        }
+      };
+
+      const observeLaunch = async (
+        attempt: RecoveryAttempt,
+        ctx: ObserveContext<Created>,
+        expected?: { id: string; version: number },
+      ) => {
+        const partial = expected ? partialRestore : partialCreate;
+        const token = CreateToken.safeParse(attempt.token);
+
+        if (!token.success)
+          return ctx.unknown(
+            "boxd create UUID was not acknowledged; inspect inventory without replay",
+          );
+
+        if (token.data.stage !== "ready") {
+          try {
+            const machine = await find(token.data.id, ctx);
+
+            if (!machine || machine.name !== nativeName(attempt.submissionId))
+              return ctx.unknown(
+                "boxd acknowledged machine is unavailable or no longer matches the attempt",
+                partial(token.data, attempt),
+              );
+          } catch {
+            return ctx.unknown(
+              "boxd acknowledged machine metadata could not be verified",
+              partial(token.data, attempt),
+            );
+          }
+
+          return ctx.unknown(
+            "boxd machine UUID is known but setup readiness is unconfirmed; inspect without replay",
+            partial(token.data, attempt),
+          );
+        }
+
+        const result = await createdResult(
+          token.data,
+          { operation: attempt.operationId, submission: attempt.submissionId },
+          ctx,
+          attempt.mounts ?? [],
+          expected,
+        );
+
+        return result === "replaced"
+          ? ctx.unknown(REPLACED, partial(token.data, attempt))
+          : (result ?? ctx.pending(token.data, { pollAfterMs: 500 }));
+      };
+
+      const snapshotRef = (
+        id: string,
+        version: number | null,
+        ownership: ResourceReference["ownership"] = "unknown",
+      ): ResourceReference<"snapshot"> => {
+        const ref: ResourceReference<"snapshot"> = {
+          version: 1,
+          kind: "snapshot",
+          provider: "boxd",
+          scope,
+          nativeId: SnapshotId.parse(id),
+          ownership,
+        };
+
+        if (version !== null) ref.generation = String(version);
+
+        return ref;
+      };
+
+      /** The captured version a reference pins; restore and delete require one. */
+      const checkedSnapshot = (ref: ResourceReference, pinned = true) => {
+        assertResourceScope(ref, { provider: "boxd", scope });
+        const generation = ref.generation === undefined ? undefined : Number(ref.generation);
+
+        if (
+          ref.kind !== "snapshot" ||
+          !SnapshotId.safeParse(ref.nativeId).success ||
+          (generation === undefined
+            ? pinned
+            : !Generation.safeParse(generation).success || String(generation) !== ref.generation)
+        )
+          throw new AdapterError("CONFLICT", "Invalid boxd snapshot identity");
+
+        return generation;
+      };
+
+      /** A snapshot by id or name, or null once boxd no longer has it. */
+      const findSnapshot = async (key: string, ctx: ReadContext): Promise<Snapshot | null> => {
+        try {
+          return await native.run(ctx, () => native.snapshots.get(key, { org: org.slug }));
+        } catch (error) {
+          if (
+            error instanceof NotFoundError ||
+            (error instanceof AdapterError && error.code === "NOT_FOUND")
+          )
+            return null;
+          throw error;
+        }
+      };
+
+      /** The snapshot at the referenced version; boxd keeps only the latest one per name. */
+      const pinnedSnapshot = async (ref: ResourceReference, ctx: ReadContext) => {
+        const version = checkedSnapshot(ref);
+        const snapshot = await findSnapshot(ref.nativeId, ctx);
+
+        if (!snapshot) throw new AdapterError("NOT_FOUND", "boxd snapshot is unavailable");
+
+        if (snapshot.id !== ref.nativeId)
+          throw new AdapterError("CONFLICT", "boxd returned a different snapshot identity");
+
+        if (snapshot.status !== "ready" || snapshot.version !== version)
+          throw new AdapterError(
+            "CONFLICT",
+            snapshot.status === "ready"
+              ? "boxd snapshot was saved again; the referenced version no longer exists"
+              : `boxd snapshot is ${snapshot.status}`,
+          );
+
+        return { snapshot, version };
+      };
+
+      const snapshotInfo = (
+        snapshot: Snapshot,
+        ref: ResourceReference = snapshotRef(snapshot.id, snapshot.version),
+        source: string | null = null,
+      ): SnapshotInfo => ({
+        reference: ref,
+        preserve: "filesystem+memory",
+        restoreExecution: "resume",
+        consistency: "unknown",
+        source: source === null ? null : { id: source, class: "boxd-machine" },
+        state:
+          snapshot.status === "ready"
+            ? "ready"
+            : snapshot.status === "pending"
+              ? "creating"
+              : "unknown",
+        // updatedAt moves with each saved version; this name only ever holds one.
+        createdAt: snapshot.updatedAt?.toISOString() ?? null,
+        expiration: "unknown",
+        excludedPaths: null,
+        mounts: [],
+        mountHandling: ref.ownership === "verified-created" ? "none" : "unknown",
+        restore: restoreSupport,
+        dependencies: [],
+        nativeDependencies: null,
+      });
+
+      const captureOutcome = (token: z.infer<typeof CaptureToken>) => ({
+        kind: "snapshot_capture" as const,
+        status: "unknown" as const,
+        snapshot:
+          token.id === undefined
+            ? undefined
+            : snapshotRef(token.id, token.version ?? null, "verified-created"),
+      });
+
+      /** Capture finishes when the attempt's name reports its captured version ready. */
+      const captureResult = async (
+        token: z.infer<typeof CaptureToken>,
+        ctx: ReadContext,
+        settle: Pick<ObserveContext<z.infer<typeof CaptureToken>>, "pending" | "unknown">,
+      ) => {
+        const snapshot = await findSnapshot(token.id ?? token.name, ctx);
+
+        if (!snapshot)
+          return settle.unknown(
+            token.id === undefined
+              ? "boxd snapshot response was lost and no snapshot carries this attempt; list snapshots without replay"
+              : "boxd snapshot disappeared before it completed",
+            captureOutcome(token),
+          );
+
+        if (snapshot.name !== token.name || (token.id !== undefined && snapshot.id !== token.id))
+          return settle.unknown(
+            "boxd snapshot identity differs from the attempt",
+            captureOutcome(token),
+          );
+        const known = { ...token, id: snapshot.id };
+        const expected = token.version ?? 1;
+
+        if (snapshot.status === "failed")
+          return settle.unknown(
+            "boxd snapshot failed; delete it if it remains",
+            captureOutcome(known),
+          );
+
+        if ((snapshot.version ?? 0) > expected)
+          return settle.unknown(
+            "boxd snapshot name was saved again during capture; inspect without replay",
+            captureOutcome(known),
+          );
+
+        if (snapshot.status !== "ready" || snapshot.version !== expected)
+          return settle.pending(known, { pollAfterMs: 500 });
+
+        return {
+          snapshot: snapshotInfo(
+            snapshot,
+            snapshotRef(snapshot.id, expected, "verified-created"),
+            token.source,
+          ),
+          capture: {
+            preserve: profile.preserve,
+            interruption: profile.interruption,
+            restoreExecution: profile.restoreExecution,
+          },
+          source: { state: "running" as const, connections: profile.connections },
+          retainedResources: [snapshotRef(snapshot.id, expected, "verified-created")],
         };
       };
 
@@ -439,175 +895,9 @@ export function createBoxdAdapter(
 
             return input;
           },
-          async submit(input, ctx) {
-            let machine: Machine;
-            let acknowledged: Created | undefined;
-
-            try {
-              machine = await native.run(
-                {
-                  ...readContext(ctx.signal),
-                  onCreate: async (id) => {
-                    acknowledged = {
-                      id: Id.parse(id),
-                      stage: "created",
-                    };
-                    await checkpointCreate(acknowledged, ctx);
-                  },
-                },
-                () =>
-                  native.machines.create({
-                    image: input.image.value,
-                    name: nativeName(ctx.submissionId),
-                    org: org.slug,
-                    isolated: true,
-                    config: {
-                      vcpu,
-                      proxies:
-                        config.preview.access === "public"
-                          ? config.preview.ports.map((port) => ({ name: `sandbar-${port}`, port }))
-                          : undefined,
-                      autoSuspendTimeout: 0,
-                      volumes: input.mounts?.map((mount) => ({
-                        diskId: mount.volume.nativeId,
-                        mountPath: mount.path,
-                        readOnly: mount.access === "read-only",
-                      })),
-                    },
-                  }),
-              );
-            } catch (error) {
-              if (error instanceof AdapterCheckpointError) throw error;
-
-              if (acknowledged)
-                return ctx.unknown(
-                  "boxd machine exists; creation metadata could not be verified",
-                  partialCreate(acknowledged, ctx),
-                );
-              const rejected = createRejection(error, [credentials.apiKey]);
-
-              return rejected
-                ? ctx.reject(rejected.code, rejected.message)
-                : ctx.unknown("boxd create response was not confirmed; do not replay");
-            }
-
-            if (!Id.safeParse(machine.id).success)
-              return acknowledged
-                ? ctx.unknown(
-                    "boxd machine exists; creation metadata has no usable machine UUID",
-                    partialCreate(acknowledged, ctx),
-                  )
-                : ctx.unknown("boxd create acknowledgement has no usable machine UUID");
-
-            const token: Created = acknowledged ?? {
-              id: machine.id,
-              stage: "created",
-            };
-
-            if (!acknowledged) await checkpointCreate(token, ctx);
-
-            if (
-              machine.id !== token.id ||
-              machine.org?.id !== org.id ||
-              machine.name !== nativeName(ctx.submissionId)
-            )
-              return ctx.unknown(
-                "boxd machine exists; creation metadata differs from the acknowledged attempt",
-                partialCreate(token, ctx),
-              );
-
-            try {
-              const expiry = await native.run(readContext(ctx.signal), () =>
-                native.machines.setDeleteAfter(token.id, config.lifetimeSeconds),
-              );
-
-              if (!expiry)
-                return ctx.unknown(
-                  "boxd machine exists; expiry was not acknowledged",
-                  partialCreate(token, ctx),
-                );
-              token.stage = "expiry-installed";
-            } catch {
-              return ctx.unknown(
-                "boxd machine exists; expiry response is unconfirmed",
-                partialCreate(token, ctx),
-              );
-            }
-
-            await checkpointCreate(token, ctx);
-
-            try {
-              await requireMachine({ id: token.id }, readContext(ctx.signal));
-
-              if (config.preview.access === "public")
-                await native.run(readContext(ctx.signal), () =>
-                  native.machines.setBotProtection(token.id, false),
-                );
-              await native.run({ ...readContext(ctx.signal), maxBytes: 32 }, () =>
-                native.machines.waitUntilReady(token.id, { timeout: 30000, pollInterval: 500 }),
-              );
-              token.stage = "ready";
-            } catch {
-              return ctx.unknown(
-                "boxd machine exists but guest readiness was not confirmed; inspect without replay",
-                partialCreate(token, ctx),
-              );
-            }
-
-            await checkpointCreate(token, ctx);
-
-            try {
-              return (
-                (await createdResult(
-                  token,
-                  { operation: ctx.operationId, submission: ctx.submissionId },
-                  readContext(ctx.signal),
-                  input.mounts ?? [],
-                )) ?? ctx.pending(token, { pollAfterMs: 500 })
-              );
-            } catch {
-              return ctx.pending(token);
-            }
-          },
-          async observe(attempt, ctx) {
-            const token = CreateToken.safeParse(attempt.token);
-
-            if (!token.success)
-              return ctx.unknown(
-                "boxd create UUID was not acknowledged; inspect inventory without replay",
-              );
-
-            if (token.data.stage !== "ready") {
-              try {
-                const machine = await find(token.data.id, ctx);
-
-                if (!machine || machine.name !== nativeName(attempt.submissionId))
-                  return ctx.unknown(
-                    "boxd acknowledged machine is unavailable or no longer matches the attempt",
-                    partialCreate(token.data, attempt),
-                  );
-              } catch {
-                return ctx.unknown(
-                  "boxd acknowledged machine metadata could not be verified",
-                  partialCreate(token.data, attempt),
-                );
-              }
-
-              return ctx.unknown(
-                "boxd machine UUID is known but setup readiness is unconfirmed; inspect without replay",
-                partialCreate(token.data, attempt),
-              );
-            }
-
-            return (
-              (await createdResult(
-                token.data,
-                { operation: attempt.operationId, submission: attempt.submissionId },
-                ctx,
-                attempt.mounts ?? [],
-              )) ?? ctx.pending(token.data, { pollAfterMs: 500 })
-            );
-          },
+          submit: (input, ctx) =>
+            launch({ image: input.image.value, mounts: input.mounts ?? [] }, ctx),
+          observe: (attempt, ctx) => observeLaunch(attempt, ctx),
         },
         async inspect(box, ctx) {
           const machine = await find(box.id, ctx);
@@ -1024,13 +1314,186 @@ export function createBoxdAdapter(
             },
           },
         },
+        snapshotProfiles: async () => snapshotSupport,
+        snapshotCapture: {
+          recovery: { version: 1, token: CaptureToken },
+          async prepare(input, ctx) {
+            const machine = await requireMachine(input.sandbox, ctx);
+            const plan = resolveSnapshot(snapshotSupport, input.request, state(machine.status));
+
+            if (plan.status !== "supported") throw new AdapterError("UNSUPPORTED", plan.reason);
+
+            if (input.request.retention?.cleanupAfterSeconds !== undefined)
+              throw new AdapterError("UNSUPPORTED", "boxd has no scheduled snapshot deletion");
+
+            // Restores cannot attach disks, and boxd does not say what a capture keeps of them.
+            if (
+              (await disks(ctx)).some((disk) =>
+                disk.attachments.some((attachment) => attachment.machineId === machine.id),
+              )
+            )
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "boxd snapshots of machines with mounted disks are not supported",
+              );
+
+            return input;
+          },
+          async submit(input, ctx) {
+            const token: z.infer<typeof CaptureToken> = {
+              name: snapshotName(ctx.submissionId),
+              source: Id.parse(input.sandbox.id),
+            };
+
+            await ctx.checkpoint(token);
+
+            let created: Awaited<ReturnType<typeof native.snapshots.create>>;
+
+            try {
+              created = await native.run(readContext(ctx.signal), () =>
+                native.snapshots.create(token.source, token.name),
+              );
+            } catch (error) {
+              return definitiveRejection(error) ? rejection(ctx, error) : ctx.pending(token);
+            }
+
+            if (
+              created.name !== token.name ||
+              !SnapshotId.safeParse(created.id).success ||
+              !Generation.safeParse(created.version).success
+            )
+              return ctx.unknown(
+                "boxd snapshot acknowledgement differs from the attempt; do not replay",
+                captureOutcome(token),
+              );
+            const known = { ...token, id: created.id, version: created.version };
+            await ctx.checkpoint(known);
+
+            try {
+              return await captureResult(known, readContext(ctx.signal), ctx);
+            } catch {
+              return ctx.pending(known, { pollAfterMs: 500 });
+            }
+          },
+          async observe(attempt, ctx) {
+            const token = CaptureToken.safeParse(attempt.token);
+
+            if (!token.success || token.data.source !== attempt.sandbox?.id)
+              return ctx.unknown("boxd capture identity is unavailable; do not replay");
+
+            return captureResult(token.data, ctx, ctx);
+          },
+        },
+        snapshotRestore: {
+          recovery: { version: 1, token: CreateToken },
+          async prepare(input, ctx) {
+            if (input.request.resources || input.request.mounts?.length)
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "boxd restores keep the captured size and cannot attach disks",
+              );
+
+            if (!restoreSupport.networkPolicies.includes(input.request.networkPolicy))
+              throw new AdapterError("UNSUPPORTED", "boxd restores require internet policy");
+            await pinnedSnapshot(input.snapshot, ctx);
+
+            return input;
+          },
+          submit: (input, ctx) =>
+            launch(
+              {
+                snapshot: {
+                  id: input.snapshot.nativeId,
+                  version: checkedSnapshot(input.snapshot)!,
+                },
+              },
+              ctx,
+            ),
+          async observe(attempt, ctx) {
+            if (!attempt.resource)
+              return ctx.unknown("boxd restore snapshot identity is unavailable; do not replay");
+
+            return observeLaunch(attempt, ctx, {
+              id: attempt.resource.nativeId,
+              version: checkedSnapshot(attempt.resource)!,
+            });
+          },
+        },
+        async snapshotInspect(ref, ctx) {
+          const version = checkedSnapshot(ref, false);
+          const snapshot = await findSnapshot(ref.nativeId, ctx);
+
+          if (!snapshot) throw new AdapterError("NOT_FOUND", "boxd snapshot is unavailable");
+
+          if (snapshot.id !== ref.nativeId)
+            throw new AdapterError("CONFLICT", "boxd returned a different snapshot identity");
+
+          if (version !== undefined && snapshot.version !== null && snapshot.version !== version)
+            throw new AdapterError(
+              "CONFLICT",
+              "boxd snapshot was saved again; the referenced version no longer exists",
+            );
+
+          return snapshotInfo(snapshot, ref);
+        },
+        snapshotListCoverage: "provider-scope",
+        async snapshotList(input, ctx) {
+          const listed = page(
+            await native.run(ctx, () => native.snapshots.list({ org: org.slug })),
+            input,
+          );
+
+          return {
+            // Listed snapshots carry no Sandbar creation evidence.
+            items: listed.items.map((snapshot) => snapshotInfo(snapshot)),
+            nextCursor: listed.nextCursor,
+            coverage: "provider-scope" as const,
+          };
+        },
+        snapshotDelete: {
+          recovery: { version: 1, token: SnapshotDeleteToken },
+          async prepare(ref, ctx) {
+            await pinnedSnapshot(ref, ctx);
+
+            return ref;
+          },
+          async submit(ref, ctx) {
+            const token = { id: ref.nativeId };
+            await ctx.checkpoint(token);
+
+            try {
+              await native.run(readContext(ctx.signal), () =>
+                native.snapshots.delete(token.id, { org: org.slug }),
+              );
+            } catch (error) {
+              return definitiveRejection(error) ? rejection(ctx, error) : ctx.pending(token);
+            }
+
+            try {
+              if (!(await findSnapshot(token.id, readContext(ctx.signal))))
+                return { deleted: true as const, reference: ref };
+            } catch {
+              /* Deletion is acknowledged; confirmation continues through observation. */
+            }
+
+            return ctx.pending(token, { pollAfterMs: 500 });
+          },
+          async observe(attempt, ctx) {
+            const token = SnapshotDeleteToken.safeParse(attempt.token);
+            const ref = attempt.resource;
+
+            if (!token.success || !ref || token.data.id !== ref.nativeId)
+              return ctx.unknown("boxd snapshot deletion identity is unavailable; do not replay");
+            checkedSnapshot(ref);
+
+            return (await findSnapshot(token.data.id, ctx))
+              ? ctx.pending(token.data, { pollAfterMs: 500 })
+              : { deleted: true as const, reference: ref };
+          },
+        },
         async resourceCapabilities() {
           return {
-            restore: {
-              status: "unsupported",
-              reason:
-                "boxd snapshots are latest-only; exact generation restore/delete is not established",
-            },
+            restore: { status: "supported", value: restoreSupport },
             volumes: {
               status: "supported",
               value: { create: true, inspect: true, list: true, delete: true },

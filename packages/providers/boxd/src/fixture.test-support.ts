@@ -15,7 +15,7 @@ import {
   type ServerUnaryCall,
   type sendUnaryData,
 } from "@grpc/grpc-js";
-import { AccountNamespace, Disks, Machines, Orgs } from "@boxd-sh/sdk";
+import { AccountNamespace, Disks, Machines, Orgs, Snapshots } from "@boxd-sh/sdk";
 import { createNativeClient, type CallContext } from "./transport";
 
 type Transport = ConstructorParameters<typeof Machines>[0];
@@ -23,6 +23,7 @@ type Transport = ConstructorParameters<typeof Machines>[0];
 const Request = z.object({
   vmId: z.string().default(""),
   vm: z.string().default(""),
+  snapshot: z.string().default(""),
   enabled: z.boolean().default(false),
   diskId: z.string().default(""),
   name: z.string().default(""),
@@ -58,6 +59,24 @@ type MachineRecord = {
   deleteAtMs: number;
   botProtection: boolean;
   proxies: { name: string; port: number }[];
+  sourceInfo?: { kind: string; name: string; version: number; id: string };
+};
+
+type SnapshotRecord = {
+  snapshotId: string;
+  name: string;
+  /** Latest ready version; 0 before the first capture lands. */
+  version: number;
+  status: string;
+  capturing: number;
+  pendingReads: number;
+  billingOrgId: string;
+  vcpu: number;
+  memoryBytes: number;
+  sizeBytes: number;
+  createdAt: number;
+  updatedAt: number;
+  useCount: number;
 };
 
 type DiskRecord = {
@@ -135,13 +154,19 @@ async function methods() {
   const machines = new Machines(capture),
     disks = new Disks(capture),
     account = new AccountNamespace(capture),
-    orgs = new Orgs(capture);
+    orgs = new Orgs(capture),
+    snapshots = new Snapshots(capture);
 
   await Promise.allSettled([
     account.get(),
     account.config(),
     orgs.list(),
     machines.create({ image: "ubuntu:24.04" }),
+    machines.create({ fromSnapshot: "snapshot" }),
+    snapshots.create("id", "snapshot"),
+    snapshots.get("snapshot"),
+    snapshots.list(),
+    snapshots.delete("snapshot"),
     machines.get("id"),
     machines.list(),
     machines.delete("id"),
@@ -169,6 +194,10 @@ export async function boxdFixture() {
   const calls: Array<{ method: string; request: unknown }> = [];
   const machines = new Map<string, MachineRecord>();
   const disks = new Map<string, DiskRecord>();
+  const snapshots = new Map<string, SnapshotRecord>();
+  let snapshotPendingReads = 0;
+  let snapshotFailure: "lose" | "fail" | undefined;
+  let restoreLaterVersion = false;
   const files = new Map<string, Uint8Array>();
   const observedStates: string[] = [];
 
@@ -313,6 +342,145 @@ export async function boxdFixture() {
               releaseHeld = () =>
                 ok({ vmId: id, name: req.name, status: "running", image: req.imageRef });
             } else ok({ vmId: id, name: req.name, status: "running", image: req.imageRef });
+            break;
+          }
+
+          case "CreateSnapshot": {
+            const machine = machines.get(req.vm);
+
+            if (!machine) {
+              missing();
+              break;
+            }
+
+            if (machine.status !== "running") {
+              callback({ code: status.FAILED_PRECONDITION, message: "machine is not running" });
+              break;
+            }
+
+            const existing = [...snapshots.values()].find((value) => value.name === req.name);
+
+            const record: SnapshotRecord = existing ?? {
+              snapshotId: crypto.randomUUID(),
+              name: req.name,
+              version: 0,
+              status: "pending",
+              capturing: 0,
+              pendingReads: 0,
+              billingOrgId: machine.billingOrgId,
+              vcpu: machine.vcpu,
+              memoryBytes: machine.memoryBytes,
+              sizeBytes: 5 * 1024 ** 3,
+              createdAt: Date.now(),
+              updatedAt: 0,
+              useCount: 0,
+            };
+
+            record.capturing = record.version + 1;
+            record.status = snapshotFailure === "fail" ? "failed" : "pending";
+            record.pendingReads = snapshotPendingReads;
+            snapshots.set(record.snapshotId, record);
+
+            if (snapshotFailure === "lose") {
+              snapshotFailure = undefined;
+              callback({ code: status.UNAVAILABLE, message: "lost after effect" });
+              break;
+            }
+
+            snapshotFailure = undefined;
+            ok({
+              snapshotId: record.snapshotId,
+              name: record.name,
+              version: record.capturing,
+              status: "pending",
+            });
+            break;
+          }
+
+          case "GetSnapshot": {
+            const record = [...snapshots.values()].find(
+              (value) =>
+                (value.snapshotId === req.name || value.name === req.name) &&
+                value.billingOrgId === org,
+            );
+
+            if (!record) {
+              missing();
+              break;
+            }
+
+            if (record.status === "pending" && record.pendingReads-- <= 0) {
+              record.status = "ready";
+              record.version = record.capturing;
+              record.updatedAt = Date.now();
+            }
+
+            ok({ snapshot: record });
+            break;
+          }
+
+          case "ListSnapshots":
+            ok({
+              snapshots: [...snapshots.values()].filter((value) => value.billingOrgId === org),
+            });
+            break;
+          case "DeleteSnapshot": {
+            const record = [...snapshots.values()].find(
+              (value) => value.snapshotId === req.name || value.name === req.name,
+            );
+
+            if (!record) missing();
+            else {
+              snapshots.delete(record.snapshotId);
+              ok();
+            }
+
+            break;
+          }
+
+          case "CreateVmFromSnapshot": {
+            const record = [...snapshots.values()].find(
+              (value) =>
+                (value.snapshotId === req.snapshot || value.name === req.snapshot) &&
+                value.billingOrgId === org,
+            );
+
+            if (!record) {
+              missing();
+              break;
+            }
+
+            if (record.version === 0) {
+              callback({ code: status.FAILED_PRECONDITION, message: "snapshot is not ready" });
+              break;
+            }
+
+            effects.create++;
+            record.useCount++;
+            const id = crypto.randomUUID();
+            machines.set(id, {
+              vmId: id,
+              name: req.name,
+              status: "running",
+              imageRef: "",
+              vcpu: record.vcpu,
+              memoryBytes: record.memoryBytes,
+              billingOrgId: org,
+              billingOrg: org,
+              isolated: req.isolated,
+              deleteAtMs: 0,
+              botProtection: true,
+              proxies: req.config?.network?.proxies ?? [],
+              sourceInfo: {
+                kind: "snapshot",
+                name: record.name,
+                // A name saved again between check and restore boots its newer version.
+                version: record.version + (restoreLaterVersion ? 1 : 0),
+                id: record.snapshotId,
+              },
+            });
+            restoreLaterVersion = false;
+            ok({ vmId: id, name: req.name, status: "running" });
             break;
           }
 
@@ -560,6 +728,28 @@ export async function boxdFixture() {
     effects,
     machines,
     disks,
+    snapshots,
+    snapshotPendingReads(value: number) {
+      snapshotPendingReads = value;
+    },
+    loseNextSnapshotResponse() {
+      snapshotFailure = "lose";
+    },
+    restoreNextFromLaterVersion() {
+      restoreLaterVersion = true;
+    },
+    failNextSnapshot() {
+      snapshotFailure = "fail";
+    },
+    /** Save the snapshot under its own name again, outside Sandbar. */
+    resaveSnapshot(id: string) {
+      const record = snapshots.get(id);
+
+      if (!record) throw Error("No snapshot");
+      record.version++;
+      record.capturing = record.version;
+      record.updatedAt = Date.now();
+    },
     files,
     observedStates,
     tokenResponse(value: Record<string, string | number | boolean | null>) {

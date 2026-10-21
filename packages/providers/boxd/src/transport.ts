@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { Client, Metadata, credentials as grpcCredentials, status } from "@grpc/grpc-js";
-import { AccountNamespace, Disks, Machines, Orgs } from "@boxd-sh/sdk";
+import { AccountNamespace, Disks, Machines, Orgs, Snapshots } from "@boxd-sh/sdk";
 import { AdapterError, type ReadContext } from "@sandbar-sdk/adapter";
 import { z } from "zod";
 
@@ -284,7 +284,10 @@ export function createNativeClient(
             }
 
             try {
-              if (method.name === "CreateVm" && ctx.onCreate) {
+              if (
+                (method.name === "CreateVm" || method.name === "CreateVmFromSnapshot") &&
+                ctx.onCreate
+              ) {
                 const acknowledgement = z.object({ vmId: z.uuid() }).parse(response);
                 await ctx.onCreate(acknowledgement.vmId);
               }
@@ -502,6 +505,7 @@ export function createNativeClient(
   return {
     machines: new Machines(transport),
     disks: new Disks(transport),
+    snapshots: new Snapshots(transport),
     account: new AccountNamespace(transport),
     orgs: new Orgs(transport),
     run<T>(ctx: CallContext, action: () => Promise<T>) {
