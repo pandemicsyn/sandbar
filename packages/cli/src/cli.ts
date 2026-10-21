@@ -27,6 +27,7 @@ import {
 import { Session, type Context } from "./session";
 import { imageCommand } from "./images";
 import { skillCommand } from "./skill";
+import { adapterCommand } from "./adapters";
 import { complete, completionCommand, formatCompletion } from "./completion";
 import type { Env } from "./config";
 
@@ -143,7 +144,15 @@ const execFlags = {
     value: "duration",
     description: "Execution deadline, e.g. 90s or 10m (default 300s)",
   },
-  "max-output": { type: "string", value: "size", description: "Captured output limit, e.g. 1m" },
+  "max-output": {
+    type: "string",
+    value: "size",
+    description: "Captured output limit for buffered and --json output, e.g. 1m",
+  },
+  "no-stream": {
+    type: "boolean",
+    description: "Print the output when the command ends instead of as it arrives",
+  },
 } satisfies Record<string, FlagSpec>;
 
 const excludeFlag = {
@@ -383,6 +392,22 @@ export const commands: readonly CommandSpec[] = [
     run: doctorCommand,
   },
   {
+    name: "adapter",
+    summary: "Install, list or remove the adapters the CLI loads, in ~/.config/sandbar/adapters",
+    usage: "sandbar adapter add <provider|package>[@version]... | ls | rm <provider|package>...",
+    flags: {},
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "sandbar adapter add e2b",
+      "sandbar adapter add daytona vercel --json",
+      "sandbar adapter add @acme/sandbar-adapter@1.2.0",
+      "sandbar adapter ls",
+      "sandbar adapter rm e2b",
+    ],
+    run: adapterCommand,
+  },
+  {
     name: "providers",
     summary:
       "List official providers, whether their adapter is installed and their credentials set",
@@ -433,7 +458,7 @@ export const exitCodes = [
   {
     code: 4,
     meaning:
-      "unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached",
+      "unsupported by this provider or profile, adapter missing or broken, npm or a password-manager CLI not installed, or store limit reached",
   },
   {
     code: 5,
@@ -459,7 +484,7 @@ function schema() {
     exitCodes,
     output: {
       json: "With --json, stdout holds exactly one document: {ok:true,data} or {ok:false,error:{code,message,retryable,outcome,hint?,known?,details?}}",
-      exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}, and run adds sandbox {name,id,kept}",
+      exec: "exec, sh and run exit with the remote command's exit code; their JSON data is {exitCode,stdout,stderr,truncated}, and run adds sandbox {name,id,kept}. Without --json, output streams as it arrives where the provider supports it",
     },
   };
 }
@@ -486,6 +511,7 @@ function topHelp(): string {
     ...flagLines(globalFlags),
     "",
     "Quick start:",
+    "  sandbar adapter add e2b",
     "  export SANDBAR_PROVIDER=e2b E2B_API_KEY=...",
     "  sandbar create --name web",
     "  sandbar exec web -- uname -a",

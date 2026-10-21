@@ -81,7 +81,9 @@ E2B and Daytona build an OCI image into a provider template or snapshot before a
 
 ## Where adapters are loaded from
 
-Adapters receive your credentials, so the CLI loads them only from `~/.config/sandbar/adapters` or from its own installation. To use adapters installed in the current project's `node_modules`, opt in with `"adapters": { "searchProject": true }` in `sandbar.json` or `SANDBAR_PROJECT_ADAPTERS=1`.
+Adapters receive your credentials, so the CLI loads them only from `~/.config/sandbar/adapters` or from its own installation. `sandbar adapter add` installs into that folder, which is its own small npm project with a `package.json`.
+
+Third-party adapters install the same way, by package name: `sandbar adapter add @acme/sandbar-adapter@1.2.0`, or `npm:acme-sandbar` for a package without a scope. A bare name that is not an official provider is refused, so a typo never installs an unrelated package that would then receive your credentials. Point a profile at the package with `"module": "@acme/sandbar-adapter"` and the export that holds the adapter (`adapter add` prints the names it found). To use adapters installed in the current project's `node_modules`, opt in with `"adapters": { "searchProject": true }` in `sandbar.json` or `SANDBAR_PROJECT_ADAPTERS=1`.
 
 ## State
 

@@ -11,11 +11,12 @@ Install the CLI, then the adapter for each provider you use. Adapters live in th
 
 ```sh
 npm install -g @sandbar-sdk/cli
-mkdir -p ~/.config/sandbar/adapters
-npm install --prefix ~/.config/sandbar/adapters @sandbar-sdk/e2b
+sandbar adapter add e2b
 ```
 
-The CLI runs on Node.js or Bun. `sandbar providers` lists the official adapters, whether each is installed and which credentials are missing.
+The CLI runs on Node.js or Bun; `sandbar adapter` uses npm to install. `sandbar adapter add` takes one or more provider ids (`daytona`, `e2b`, `vercel`, `boxd`, `modal`, `runloop`, `boat`) and installs each official adapter at the same version as the CLI, so the two always match. It then imports the package to check that the adapter is there. Running it again with nothing to change skips npm, so it is safe in CI setup steps. `sandbar adapter ls` shows what is installed and flags an official adapter whose version differs from the CLI's; `sandbar adapter rm e2b` removes one.
+
+`sandbar providers` lists the official adapters, whether each is installed and which credentials are missing.
 
 ## Quick start
 
@@ -64,6 +65,7 @@ To keep provider settings in one place instead of environment variables, see [Co
 
 - `exec` passes the command after `--` as separate arguments, with no shell. Use `sh` when you need pipes, redirects or `&&`.
 - `exec`, `sh` and `run` exit with the remote command's own exit code, so `sandbar exec web -- test -f /x && echo yes` works as expected. Failures of the CLI itself exit 125.
+- `exec`, `sh` and `run` print output as it arrives on Daytona, E2B and Vercel, so long builds and test runs show progress. On other providers, and with `--json` or `--no-stream`, the output is printed when the command ends; `--max-output` limits only that captured output. `--timeout` (default 5 minutes) applies either way: a streaming command that runs past it, or that you stop with Ctrl-C, is asked to terminate before the CLI exits.
 - `create --env K=V` (repeatable) and `--env-file <path>` set environment variables for every command in the sandbox; `exec --env` overrides a name for one command. `--env NAME` without a value copies `NAME` from your shell, which keeps secrets out of history. `.env` files hold `NAME=VALUE` lines; `#` comments (also after a value, following a space), blank lines and `export` are allowed. Unquoted values are trimmed; `"..."` values understand `\n`, `\"` and `\\`, and `'...'` values are literal. Multi-line values are not supported. Values are never written to the store, `--json` output or messages. Providers without sandbox-wide variables (boxd) reject `--env` on `create` before creating anything. On `exec`, `sh` and `run`, the same flags apply to that one command.
 - `cp` copies a file in either direction; the sandbox side is written `<name>:/absolute/path`. `cat <name>:/path` prints a file. With `-r` it copies a directory too, like `cp -r`: an existing destination folder receives a child of the same name. `--exclude <glob>` (repeatable) skips matching paths; a pattern without `/`, such as `node_modules` or `*.log`, matches a name at any depth.
 - `push <name>[:/dir] [path]` sends a local folder (default `.`) into the sandbox, by default to `work` under the sandbox user's home, and prints where it landed. In a git work tree it sends what git would: tracked files plus untracked files that are not ignored, so `.git`, `node_modules` and build output stay behind. `--include-ignored` sends every file. `run --push <path>` does the same in its new sandbox and runs the command in that folder unless you pass `--cwd`.

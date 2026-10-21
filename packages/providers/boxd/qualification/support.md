@@ -24,7 +24,7 @@ Adapter support and live validation are separate facts. **Supported** means impl
 | OCI image builds                    | [Unsupported · not-run](#boxd-oci)                  |
 | Measured network controls           | [Unsupported · not-run](#boxd-network)              |
 | Cold snapshot with selected storage | [Unsupported · not-run](#boxd-storageComposition)   |
-| Snapshot roundtrip                  | [Unsupported · not-run](#boxd-snapshots)            |
+| Snapshot roundtrip                  | [Conditional · not-run](#boxd-snapshots)            |
 | Volume CRUD                         | [Conditional · not-run](#boxd-volumes)              |
 | Mounted persistence                 | [Conditional · not-run](#boxd-persistence)          |
 
@@ -126,7 +126,7 @@ Not implemented by this adapter.
 
 ### Snapshot roundtrip
 
-Native capture is memory + disk, versioned latest-only. Exact immutable generation targeting for restore/delete is not established; the complete Sandbar snapshot workflow is unsupported. No capture-only allocation.
+Native memory + disk capture of a running machine without mounted disks, with a brief pause; the source keeps running. Each capture uses an attempt-derived unique name and the reference pins the captured version, checked before inspect/restore/delete; a restore that boots another version is unknown with the machine identity. Restores resume captured processes in a new machine at the captured size, with no mounts or resizing. Provider-scope list; no scheduled deletion. No live qualification.
 
 <a id="boxd-volumes"></a>
 

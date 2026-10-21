@@ -28,7 +28,7 @@ Acceptance tests cover preabort, hung setup, authentication failure, success/abo
 
 ## Selected contract
 
-Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**. E2B filesystem-only pause is a real native choice but deferred; Daytona VM/GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
+Reopen Sandbar-created compute, inspect current state/deadlines, renew lifetime through the configured adapter policy, and explicitly suspend/resume the same logical resource. Initial suspension covers Daytona **containers** and E2B **memory pause**; Daytona **Linux VM** native pause (filesystem+memory) followed. E2B filesystem-only pause is a real native choice but deferred; Daytona GPU/Windows suspension is also deferred. No snapshot/delete/recreate emulation, raw-ID adoption, streaming processes, PTYs/tunnels, new providers, automatic paid snapshot policy, mounted suspension, or volume cleanup-policy configuration.
 
 The SDK exports sandbox references, `sandboxes.get`, enriched `inspect`, renewal and native suspend/resume. The [recovery DX contract](sdk-recovery-dx.md) governs ordinary results/errors and compatibility. Current `sandbar-sdk` and `@sandbar-sdk/adapter` exports are authoritative for types; legacy adapters retain the null-reference fallback below.
 
@@ -100,14 +100,14 @@ Calls are explicit mutations, not “ensure state” helpers. Already suspended/
 
 Bounds above are the adapter's request bounds; they are not guaranteed account entitlement. Revalidate before mutation; capabilities are observations, not reservations. Keep the existing `suspension` capability consistent with per-operation support; do not advertise contradictory sources of truth.
 
-| Operation | Daytona container | E2B | Prerequisites / limits |
+| Operation | Daytona container / Linux VM | E2B | Prerequisites / limits |
 | --- | --- | --- | --- |
 | Reopen, inspect | Native scoped GET | Native scoped GET | Valid creation correlation and original binding; E2B teamId for key rotation |
 | Guest exec/files after reopen | Existing toolbox path | GET + local envd client | Running; E2B auto-resume off and detail token present |
 | Renew | Reset hard TTL, round up to minutes | Reset active session deadline | Same SDK call; native scope, expiry and limits documented at setup; rounding never grants less time |
-| Suspend | Native stop, filesystem | Native memory pause | No mounts; Daytona auto-delete disabled; E2B account/API must accept memory pause |
-| Resume | Native start from stopped/archived | Native v2 connect from paused | Saved compute still exists; E2B new session timeout, process provenance may remain unknown |
-| Memory suspend on Daytona / filesystem-only on E2B | Deferred VM mapping | Deferred real native mode | Not claims of native impossibility |
+| Suspend | Container: native stop, filesystem. Linux VM: native pause, filesystem+memory (configured `filesystem` stops instead) | Native memory pause | No mounts; Daytona auto-delete disabled; E2B account/API must accept memory pause |
+| Resume | Native start from stopped/archived/paused; `resumed` only from a VM read as natively `paused` before dispatch | Native v2 connect from paused | Saved compute still exists; E2B new session timeout, process provenance may remain unknown |
+| Filesystem-only on E2B | — | Deferred real native mode | Not a claim of native impossibility |
 
 Use an optional public adapter hook `reopen(reference, ReadContext): Promise<SandboxInfo>` and enrich the existing `inspect` result with optional lifecycle fields, including a verified reference issued from scoped native detail. The direct SDK normalizes legacy inspect results to `reference: null`, `nativeState: null`, a receipt timestamp and unknown lifecycle facts; do not fabricate a reference from `id`. Existing third-party create/exec/files/destroy and inspect remain usable with `box.reference === null`; get and lifecycle mutations are unsupported without their hooks. Daytona/E2B create/restore decoders obtain verified detail before returning a non-null reference, retaining the allocation recovery reference if that read fails. Add `renew`, `suspend`, `resume` as the existing `Mutation<Input, Value, ...>` form. Mutation inputs carry the validated sandbox reference plus the corresponding request; results above are plain serializable values. Add only `sandbox_renew`, `sandbox_suspend`, `sandbox_resume` operation kinds and their result decoders. Keep provider-specific read/prepare/submit/observe code next to existing state-native fixtures. Do not route the new operations through legacy SPI orchestration or extract a new engine.
 

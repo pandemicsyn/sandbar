@@ -22,23 +22,23 @@ These work with every command.
 
 With `--json`, stdout holds exactly one document: `{ok:true,data}` or `{ok:false,error:{code,message,retryable,outcome,hint?,known?,details?}}`. Diagnostics always go to stderr.
 
-`exec`, `sh` and `run` exit with the remote command's exit code; their JSON data is `{exitCode,stdout,stderr,truncated}`, and run adds sandbox `{name,id,kept}`.
+`exec`, `sh` and `run` exit with the remote command's exit code; their JSON data is `{exitCode,stdout,stderr,truncated}`, and run adds sandbox `{name,id,kept}`. Without --json, output streams as it arrives where the provider supports it.
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                        |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | success                                                                                                                        |
-| 1    | other failure                                                                                                                  |
-| 2    | usage error; fix the command                                                                                                   |
-| 3    | not found                                                                                                                      |
-| 4    | unsupported by this provider or profile, adapter missing or broken, password-manager CLI not installed, or store limit reached |
-| 5    | authentication or permission failure, or an unreadable password-manager secret                                                 |
-| 6    | outcome unknown: an effect may have happened, inspect before retrying                                                          |
-| 7    | retryable: rate limit, capacity or unavailable before any effect                                                               |
-| 8    | partial: some steps were confirmed; read error.known                                                                           |
-| 125  | exec/run: the CLI or provider failed; details in the error                                                                     |
-| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox                         |
+| Code | Meaning                                                                                                                                 |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success                                                                                                                                 |
+| 1    | other failure                                                                                                                           |
+| 2    | usage error; fix the command                                                                                                            |
+| 3    | not found                                                                                                                               |
+| 4    | unsupported by this provider or profile, adapter missing or broken, npm or a password-manager CLI not installed, or store limit reached |
+| 5    | authentication or permission failure, or an unreadable password-manager secret                                                          |
+| 6    | outcome unknown: an effect may have happened, inspect before retrying                                                                   |
+| 7    | retryable: rate limit, capacity or unavailable before any effect                                                                        |
+| 8    | partial: some steps were confirmed; read error.known                                                                                    |
+| 125  | exec/run: the CLI or provider failed; details in the error                                                                              |
+| 130  | interrupted by SIGINT (129 for SIGHUP, 143 for SIGTERM); an interrupted run still destroys its sandbox                                  |
 
 ## create
 
@@ -158,7 +158,8 @@ sandbar exec <sandbox> [--cwd <dir>] [--env K=V]... [--stdin] -- <command> [args
 | `--stdin`              | Send this process's stdin to the command                                        |
 | `--stdin-file <path>`  | Send a local file as the command's stdin                                        |
 | `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                              |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                                                  |
+| `--max-output <size>`  | Captured output limit for buffered and --json output, e.g. 1m                   |
+| `--no-stream`          | Print the output when the command ends instead of as it arrives                 |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -185,7 +186,8 @@ sandbar sh <sandbox> '<script>' | sandbar sh <sandbox> -- '<script>'
 | `--stdin`              | Send this process's stdin to the command                                        |
 | `--stdin-file <path>`  | Send a local file as the command's stdin                                        |
 | `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                              |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                                                  |
+| `--max-output <size>`  | Captured output limit for buffered and --json output, e.g. 1m                   |
+| `--no-stream`          | Print the output when the command ends instead of as it arrives                 |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -218,7 +220,8 @@ sandbar run [create flags] [exec flags] [--keep] [--push <path>] -- <command> [a
 | `--stdin`              | Send this process's stdin to the command                                        |
 | `--stdin-file <path>`  | Send a local file as the command's stdin                                        |
 | `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                              |
-| `--max-output <size>`  | Captured output limit, e.g. 1m                                                  |
+| `--max-output <size>`  | Captured output limit for buffered and --json output, e.g. 1m                   |
+| `--no-stream`          | Print the output when the command ends instead of as it arrives                 |
 | `--keep`               | Keep the sandbox and print its name on stderr                                   |
 | `--push <path>`        | Send a local folder to ~/work first and run the command there                   |
 | `--exclude <glob>`     | Skip matching paths (repeatable; a pattern without / matches any name)          |
@@ -330,6 +333,24 @@ Examples:
 
 ```sh
 sandbar doctor --provider e2b
+```
+
+## adapter
+
+Install, list or remove the adapters the CLI loads, in ~/.config/sandbar/adapters.
+
+```sh
+sandbar adapter add <provider|package>[@version]... | ls | rm <provider|package>...
+```
+
+Examples:
+
+```sh
+sandbar adapter add e2b
+sandbar adapter add daytona vercel --json
+sandbar adapter add @acme/sandbar-adapter@1.2.0
+sandbar adapter ls
+sandbar adapter rm e2b
 ```
 
 ## providers

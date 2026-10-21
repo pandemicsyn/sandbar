@@ -18,7 +18,7 @@ sandbar rm web
 sandbar run -- python3 -c 'print(2 + 2)'   # create, run, always destroy
 ```
 
-The adapter package must be installed where the CLI can find it: in `~/.config/sandbar/adapters` (`cd ~/.config/sandbar/adapters && npm install @sandbar-sdk/e2b`) or next to the CLI itself. Adapters receive your credentials, so the current project's `node_modules` is searched only when you opt in with `"adapters": { "searchProject": true }` or `SANDBAR_PROJECT_ADAPTERS=1`. `sandbar providers` shows what is installed and which credentials are set.
+Install the adapter for each provider with `sandbar adapter add e2b` (or `daytona`, `vercel`, ...). It runs npm in `~/.config/sandbar/adapters`, pins the official adapter to the CLI's own version, and checks that the package exports the adapter. Third-party adapters are added by scoped package name (`sandbar adapter add @acme/sandbar-adapter`) or with an explicit `npm:` prefix; a bare unknown name is refused so a typo can't install someone else's package. The CLI also finds adapters installed next to itself. Adapters receive your credentials, so the current project's `node_modules` is searched only when you opt in with `"adapters": { "searchProject": true }` or `SANDBAR_PROJECT_ADAPTERS=1`. `sandbar providers` shows what is installed and which credentials are set.
 
 ## Commands
 
@@ -28,7 +28,7 @@ The adapter package must be installed where the CLI can find it: in `~/.config/s
 | `ls [--offline]` | List store records with live state (`running`, `gone`, `unreachable`, ...) |
 | `inspect <sandbox>` | State, expiry and reference |
 | `rm <sandbox>... \| --all [--force]` | Destroy and forget; only sandboxes this CLI created unless `--force`. `--all` skips the others and reports them |
-| `exec <sandbox> [--cwd] [--env K=V] [--stdin \| --stdin-file] [--timeout] [--max-output] -- cmd...` | Run argv; exit code passes through |
+| `exec <sandbox> [--cwd] [--env K=V] [--stdin \| --stdin-file] [--timeout] [--max-output] [--no-stream] -- cmd...` | Run argv; output streams where the provider can; exit code passes through |
 | `sh <sandbox> '<script>'` (or `-- '<script>'`) | Run a shell script; same flags as exec |
 | `run [create and exec flags] [--keep] -- cmd...` | Create, run one command, destroy |
 | `image build <oci-ref> [--name] [--refresh]` | Build an OCI image on a provider that needs a build first, and record it |
@@ -37,6 +37,7 @@ The adapter package must be installed where the CLI can find it: in `~/.config/s
 | `push <sandbox>[:/dir] [path]` | Send a local folder's git-tracked and unignored files (default `.` to `~/work`); `run --push <path>` does the same before its command |
 | `cat <sandbox>:/path` | Print a file |
 | `doctor` | Check config, credentials and the connection; creates nothing |
+| `adapter add <provider\|package>[@version]...`, `adapter ls`, `adapter rm <provider\|package>...` | Install, list or remove adapters in `~/.config/sandbar/adapters` |
 | `providers` | Official providers, install state and missing credentials |
 | `schema` | Machine-readable description of every command, flag and exit code |
 | `skill [install [--project]]` | Print the agent skill for this CLI, or install it for your coding agents |
@@ -62,7 +63,9 @@ With `--json` (or `SANDBAR_JSON=1`) stdout holds exactly one document: `{"ok":tr
 
 `exec`, `sh` and `run` exit with the remote command's exit code. Their own failures always use 125, so they never look like a command's result; providers report deadlines differently, so there is no separate deadline code. A missing exit status is 125 with `OUTCOME_UNKNOWN` and the captured output in `error.known.exec`, never 0. If `run` cannot destroy its sandbox it exits 125 with `CLEANUP_FAILED`, and the command's result is inside that one error document.
 
-SIGINT, SIGTERM and SIGHUP all stop local waiting and let `run` clean up, then exit 130, 143 or 129 (`INTERRUPTED` for `run`); a second signal exits at once.
+Human output from `exec`, `sh` and `run` streams as it arrives where the adapter streams process bytes (Daytona, E2B and Vercel today); elsewhere, and with `--json` or `--no-stream`, it is printed when the command ends, limited by `--max-output`. Streaming commands have no native deadline, so the CLI enforces `--timeout` (default 300s) itself: it asks the provider to terminate the command and exits 125 with `TIMEOUT`.
+
+SIGINT, SIGTERM and SIGHUP all stop local waiting (and ask the provider to terminate a streaming command) and let `run` clean up, then exit 130, 143 or 129 (`INTERRUPTED` for `run`); a second signal exits at once.
 
 ## Shell completion
 

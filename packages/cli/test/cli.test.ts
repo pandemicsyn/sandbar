@@ -1028,6 +1028,207 @@ describe("sandbar CLI against the fake provider", () => {
     });
   });
 
+  describe("adapter", () => {
+    const adapters = () => join(dir, ".config", "sandbar", "adapters");
+
+    const version = async (): Promise<string> =>
+      JSON.parse(await readFile(join(import.meta.dir, "..", "package.json"), "utf8")).version;
+
+    /** Put the stand-in npm (and bun, which runs it) on an otherwise empty PATH. */
+    async function fakeNpm(extra: Record<string, string> = {}) {
+      const bin = join(dir, "bin");
+      await mkdir(bin, { recursive: true });
+      await symlink(process.execPath, join(bin, "bun"));
+      await symlink(join(import.meta.dir, "fake-npm.ts"), join(bin, "npm"));
+
+      return { PATH: bin, FAKE_NPM_LOG: join(dir, "npm.log"), ...extra };
+    }
+
+    async function npmCalls(): Promise<{ args: string[]; cwd: string }[]> {
+      try {
+        const log = await readFile(join(dir, "npm.log"), "utf8");
+
+        return log
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+      } catch {
+        return [];
+      }
+    }
+
+    test("add installs an official adapter at the CLI's version and reruns without npm", async () => {
+      const env = await fakeNpm();
+      const cliVersion = await version();
+
+      const added = await cli(["adapter", "add", "e2b", "--json"], env);
+
+      expect(added.code).toBe(0);
+      expect(envelope(added).data).toMatchObject({
+        dir: adapters(),
+        adapters: [
+          {
+            package: "@sandbar-sdk/e2b",
+            provider: "e2b",
+            version: cliVersion,
+            previous: null,
+            result: "installed",
+          },
+        ],
+      });
+      expect(envelope(added).data.adapters[0].exports).toContain("e2bAdapter");
+      expect(added.stderr).toContain("changed 1 packages");
+      expect(await npmCalls()).toEqual([
+        {
+          args: [
+            "install",
+            "--prefix",
+            adapters(),
+            "--no-audit",
+            "--no-fund",
+            "--save-exact",
+            `@sandbar-sdk/e2b@${cliVersion}`,
+          ],
+          cwd: adapters(),
+        },
+      ]);
+      expect(JSON.parse(await readFile(join(adapters(), "package.json"), "utf8"))).toMatchObject({
+        private: true,
+        dependencies: { "@sandbar-sdk/e2b": cliVersion },
+      });
+
+      const again = await cli(["adapter", "add", "e2b"], env);
+
+      expect(again).toMatchObject({
+        code: 0,
+        stdout: `unchanged @sandbar-sdk/e2b@${cliVersion} (e2b)\n`,
+      });
+      expect(await npmCalls()).toHaveLength(1);
+    });
+
+    test("an added third-party adapter loads from a profile", async () => {
+      const env = await fakeNpm();
+      await writeConfig({
+        default: "acme",
+        profiles: { acme: { module: "@acme/sandbar-fake", export: "fake" } },
+      });
+
+      expect((await cli(["doctor", "--json"], env)).code).toBe(4);
+
+      const added = await cli(["adapter", "add", "@acme/sandbar-fake@1.2.0"], env);
+
+      expect(added.code).toBe(0);
+      expect(added.stdout).toMatch(/^installed @acme\/sandbar-fake@1\.2\.0 exports .*\bfake\b/);
+      expect((await npmCalls())[0]!.args.at(-1)).toBe("@acme/sandbar-fake@1.2.0");
+      expect((await cli(["doctor", "--json"], env)).code).toBe(0);
+    });
+
+    test("an unknown bare name is refused before npm runs; npm: names it explicitly", async () => {
+      const env = await fakeNpm();
+      const refused = await cli(["adapter", "add", "e2bb", "--json"], env);
+
+      expect(refused.code).toBe(2);
+      expect(envelope(refused).error).toMatchObject({
+        code: "USAGE",
+        message: "Unknown provider e2bb",
+      });
+      expect(envelope(refused).error.hint).toContain("npm:e2bb");
+      expect(await npmCalls()).toEqual([]);
+
+      expect((await cli(["adapter", "add", "npm:acme-sandbar"], env)).code).toBe(0);
+      expect((await npmCalls())[0]!.args.at(-1)).toBe("acme-sandbar");
+    });
+
+    test("a package without an adapter export fails verification", async () => {
+      const result = await cli(
+        ["adapter", "add", "@acme/not-an-adapter", "--json"],
+        await fakeNpm(),
+      );
+
+      expect(result.code).toBe(4);
+      expect(envelope(result).error).toMatchObject({
+        code: "ADAPTER_LOAD_FAILED",
+        message: "@acme/not-an-adapter exports no Sandbar adapter",
+      });
+    });
+
+    test("npm failures and a missing npm are reported with their own codes", async () => {
+      const failed = await cli(
+        ["adapter", "add", "e2b", "--json"],
+        await fakeNpm({ FAKE_NPM_FAIL: "1" }),
+      );
+
+      expect(failed.code).toBe(1);
+      expect(envelope(failed).error.code).toBe("ADAPTER_INSTALL_FAILED");
+      expect(envelope(failed).error.message).toContain("404 Not Found");
+      expect(failed.stderr).toContain("npm error code E404");
+
+      const bin = join(dir, "bun-only");
+      await mkdir(bin);
+      await symlink(process.execPath, join(bin, "bun"));
+
+      const missing = await cli(["adapter", "add", "e2b", "--json"], { PATH: bin });
+
+      expect(missing.code).toBe(4);
+      expect(envelope(missing).error.code).toBe("ADAPTER_INSTALLER_MISSING");
+    });
+
+    test("ls reports versions that differ from the CLI, and rm is idempotent", async () => {
+      const env = await fakeNpm();
+
+      expect((await cli(["adapter", "ls"], env)).stdout).toContain("no adapters in");
+
+      const old = await cli(["adapter", "add", "daytona@0.0.1"], env);
+
+      expect(old.code).toBe(0);
+      expect(old.stderr).toContain("differs from this CLI");
+      await cli(["adapter", "add", "@acme/sandbar-fake"], env);
+
+      const listed = await cli(["adapter", "ls", "--json"], env);
+
+      expect(envelope(listed).data.adapters).toEqual([
+        {
+          package: "@acme/sandbar-fake",
+          provider: null,
+          requested: "9.9.9",
+          version: "9.9.9",
+          status: "ok",
+        },
+        {
+          package: "@sandbar-sdk/daytona",
+          provider: "daytona",
+          requested: "0.0.1",
+          version: "0.0.1",
+          status: "version-mismatch",
+        },
+      ]);
+
+      expect((await cli(["adapter", "rm", "daytona@0.0.1"], env)).code).toBe(2);
+
+      const removed = await cli(["adapter", "rm", "daytona", "e2b", "--json"], env);
+
+      expect(envelope(removed).data.adapters).toEqual([
+        { package: "@sandbar-sdk/daytona", provider: "daytona", result: "removed" },
+        { package: "@sandbar-sdk/e2b", provider: "e2b", result: "absent" },
+      ]);
+      expect((await npmCalls()).at(-1)!.args).toEqual([
+        "uninstall",
+        "--prefix",
+        adapters(),
+        "--no-audit",
+        "--no-fund",
+        "@sandbar-sdk/daytona",
+      ]);
+
+      const calls = (await npmCalls()).length;
+
+      expect((await cli(["adapter", "rm", "daytona"], env)).stdout).toBe(
+        "absent  @sandbar-sdk/daytona\n",
+      );
+      expect(await npmCalls()).toHaveLength(calls);
+    });
+  });
+
   describe("images", () => {
     let builds: string;
 
@@ -1611,6 +1812,153 @@ describe("create-time environment", () => {
     }
 
     expect(await fakeResources()).toEqual([]);
+  });
+});
+
+describe("streaming exec output", () => {
+  let terminations: string;
+
+  beforeEach(async () => {
+    terminations = join(dir, "terminations.log");
+    await writeConfig({
+      default: "streaming",
+      profiles: {
+        streaming: { module: fixture, export: "streaming" },
+        hanging: { module: fixture, export: "hanging" },
+      },
+    });
+  });
+
+  async function terminated() {
+    return (await readFile(terminations, "utf8").catch(() => "")).split("\n").filter(Boolean);
+  }
+
+  /** Start the CLI and send `signal` once the command's first output reaches stdout. */
+  async function interrupt(args: string[], signal: NodeJS.Signals): Promise<Result> {
+    const child = Bun.spawn(["bun", main, ...args], {
+      cwd: dir,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: dir,
+        SANDBAR_CONFIG: join(dir, "sandbar.json"),
+        SANDBAR_STATE_DIR: join(dir, "state"),
+        SANDBAR_FAKE_URL: server.url.origin,
+        SANDBAR_FAKE_TOKEN: token,
+        SANDBAR_FAKE_TERMINATIONS: terminations,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderr = new Response(child.stderr).text();
+    const decoder = new TextDecoder();
+    let stdout = "";
+
+    const reader = child.stdout.getReader();
+
+    for (let read = await reader.read(); !read.done; read = await reader.read()) {
+      if (!stdout) child.kill(signal);
+      stdout += decoder.decode(read.value, { stream: true });
+    }
+
+    return { code: await child.exited, stdout, stderr: await stderr };
+  }
+
+  test("exec, sh and run stream stdout, stderr and the exit code where the provider can", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await seedExec(["make", "test"], 7, "building\n", "1 failed\n");
+
+    expect(await cli(["exec", "box", "--", "make", "test"])).toEqual({
+      code: 7,
+      stdout: "building\n",
+      stderr: "1 failed\n",
+    });
+
+    await seedExec("echo hi", 0, "hi\n");
+
+    expect(await cli(["sh", "box", "echo hi"])).toEqual({ code: 0, stdout: "hi\n", stderr: "" });
+
+    await seedExec(["make"], 3, "made\n");
+
+    expect(await cli(["run", "--prepared", "fake-starter", "--", "make"])).toEqual({
+      code: 3,
+      stdout: "made\n",
+      stderr: "",
+    });
+  });
+
+  test("output arrives before the command ends, and --timeout terminates it", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter", "--profile", "hanging"]);
+    await seedExec(["serve"], 0, "listening\n");
+
+    const result = await cli(["exec", "box", "--timeout", "1s", "--", "serve"], {
+      SANDBAR_FAKE_TERMINATIONS: terminations,
+    });
+
+    expect(result.code).toBe(125);
+    expect(result.stdout).toBe("listening\n");
+    expect(result.stderr).toContain("ran past --timeout 1s; termination was requested");
+    expect(await terminated()).toEqual(["terminate"]);
+  });
+
+  test("Ctrl-C terminates an exec and exits 130", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter", "--profile", "hanging"]);
+    await seedExec(["serve"], 0, "listening\n");
+
+    const result = await interrupt(["exec", "box", "--", "serve"], "SIGINT");
+
+    expect(result.code).toBe(130);
+    expect(result.stdout).toBe("listening\n");
+    expect(result.stderr).toContain("interrupted; termination was requested");
+    expect(await terminated()).toEqual(["terminate"]);
+    expect(await storeNames()).toEqual(["box.json"]);
+  });
+
+  test("SIGTERM terminates a run's command and still destroys its sandbox", async () => {
+    await seedExec(["serve"], 0, "listening\n");
+
+    const result = await interrupt(
+      ["run", "--profile", "hanging", "--prepared", "fake-starter", "--", "serve"],
+      "SIGTERM",
+    );
+
+    expect(result.code).toBe(143);
+    expect(result.stderr).toContain("was destroyed");
+    expect(await terminated()).toEqual(["terminate"]);
+    expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("--json and --no-stream keep the buffered exec, which a held process never reaches", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter", "--profile", "hanging"]);
+    await seedExec(["serve"], 0, "listening\n");
+
+    const json = await cli(["exec", "box", "--json", "--", "serve"]);
+
+    expect(envelope(json)).toMatchObject({
+      ok: true,
+      data: { exitCode: 0, stdout: "listening\n", stderr: "", truncated: false },
+    });
+    await seedExec(["serve"], 0, "listening\n");
+
+    expect(await cli(["exec", "box", "--no-stream", "--", "serve"])).toEqual({
+      code: 0,
+      stdout: "listening\n",
+      stderr: "",
+    });
+  });
+
+  test("providers without streaming keep buffered output", async () => {
+    await writeConfig({ default: "fake", profiles: { fake: { module: fixture, export: "fake" } } });
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await seedExec(["make", "test"], 7, "building\n", "1 failed\n");
+
+    expect(await cli(["exec", "box", "--", "make", "test"])).toEqual({
+      code: 7,
+      stdout: "building\n",
+      stderr: "1 failed\n",
+    });
   });
 });
 

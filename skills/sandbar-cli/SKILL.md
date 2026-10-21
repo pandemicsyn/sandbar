@@ -16,7 +16,7 @@ sandbar providers --json   # which adapters are installed and which credentials 
 
 - If `sandbar` is not on PATH, stop and tell the user; do not install anything yourself.
 - The provider comes from `--profile`, `SANDBAR_PROFILE`, `--provider`, `SANDBAR_PROVIDER`, then `default` in `~/.config/sandbar/sandbar.json`. Do not edit that file or credentials unless the user asks.
-- A missing adapter (exit 4, `ADAPTER_NOT_INSTALLED`), an installed adapter that fails to load (exit 4, `ADAPTER_LOAD_FAILED`) or a missing credential (exit 2) is the user's to fix. Report the `hint` from the error.
+- A missing adapter (exit 4, `ADAPTER_NOT_INSTALLED`; the user installs it with `sandbar adapter add <provider>`), an installed adapter that fails to load (exit 4, `ADAPTER_LOAD_FAILED`) or a missing credential (exit 2) is the user's to fix. Report the `hint` from the error.
 
 **Sandboxes cost money.** Create only what the task needs and destroy it when done.
 
@@ -56,6 +56,7 @@ sandbar rm --json job-1
 - Give sandboxes a `--name` so you can find them again; names are lowercase letters, digits and dashes. `--if-not-exists` reuses a live sandbox with that name instead of failing.
 - `exec` takes an argv after `--`; no shell runs. Use `sh` only when you need pipes, redirects or `&&`. For a script that starts with `-`, put it after `--`: `sandbar sh job-1 -- '-n ...'`.
 - `--env K=V` (repeatable), `--env-file <path>`, `--cwd`, `--stdin` or `--stdin-file <path>`, `--timeout 30s|5m|1h`, `--max-output 1m`.
+- Without `--json`, output streams live on providers that support it (Daytona, E2B, Vercel). With `--json` it is always captured into the one document, limited by `--max-output`.
 - On `create`, `--env K=V` and `--env-file <path>` set variables for every later `exec`/`sh` in that sandbox; a command's own `--env` wins. For a secret, pass `--env NAME` (no value) to copy it from your environment instead of typing it. Values are never stored or printed. Providers that cannot keep sandbox variables (boxd) fail with exit 4 and `UNSUPPORTED` before creating anything; pass `--env` on each `exec` there. On `run`, `--env` applies to its one command and works everywhere.
 - `cp` copies one file; one side is `<sandbox>:/absolute/path`. `--no-clobber` refuses to overwrite. `cp -r` copies a directory either way (`--exclude <glob>` skips paths); an existing destination folder gets a child of the same name.
 - `sandbar push <sandbox>[:/dir] [path]` sends a local folder (default `.`) to `~/work` in the sandbox, or `/dir`, and prints the absolute path. In a git work tree it sends tracked and unignored files only; `--include-ignored` sends everything. `sandbar run --push . -- <cmd>` pushes, then runs the command in that folder. Directory copies need `tar` in the sandbox: exit 4 with `UNSUPPORTED` means it is missing.

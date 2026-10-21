@@ -182,7 +182,7 @@ test("boxd conformance exercises real protobuf RPCs, one-attempt faults and dist
   expect(fixture.calls.filter((call) => call.method === "CreateVm")).toHaveLength(3);
 });
 
-test("setup default policy and image produce an ordinary create; explicit blocked and snapshots reject before effects", async () => {
+test("setup default policy and image produce an ordinary create; explicit blocked and unmet snapshot requirements reject before effects", async () => {
   const { fixture, connect } = await setup();
   const client = await connect();
 
@@ -197,7 +197,10 @@ test("setup default policy and image produce an ordinary create; explicit blocke
     await expect(client.sandboxes.create({ networkPolicy: "blocked" })).rejects.toMatchObject({
       code: "UNSUPPORTED",
     });
-    await expect(box.snapshot()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(box.snapshot({ requirements: { preserve: "filesystem" } })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+    });
+    expect(fixture.calls.some((call) => call.method === "CreateSnapshot")).toBe(false);
     expect(fixture.effects.create).toBe(1);
     await box.destroy();
   } finally {
@@ -936,6 +939,195 @@ test("boxd declares create env unsupported and rejects it before any native call
     expect(fixture.effects.create).toBe(0);
     expect(fixture.calls.slice(calls).map((call) => call.method)).not.toContain("CreateVm");
     expect(JSON.stringify(fixture.calls)).not.toContain("fixture-env-value");
+  } finally {
+    await client.close();
+  }
+});
+
+const snapshotCalls = (fixture: Awaited<ReturnType<typeof boxdFixture>>, method: string) =>
+  fixture.calls.filter((call) => call.method === method);
+
+test("snapshots capture memory under a unique name and restore that exact version", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const source = await client.sandboxes.create();
+    fixture.snapshotPendingReads(2);
+    const captured = await source.snapshot();
+    const { snapshot } = captured;
+
+    expect(snapshotCalls(fixture, "CreateSnapshot")).toHaveLength(1);
+    expect(snapshotCalls(fixture, "CreateSnapshot")[0]?.request).toMatchObject({
+      vm: source.id,
+      name: expect.stringMatching(/^sandbar-snapshot-[0-9a-f]{24}$/),
+    });
+    expect(snapshot.reference).toMatchObject({
+      kind: "snapshot",
+      provider: "boxd",
+      generation: "1",
+      ownership: "verified-created",
+    });
+    expect(captured.capture).toEqual({
+      preserve: "filesystem+memory",
+      interruption: "pause",
+      restoreExecution: "resume",
+    });
+    expect(captured.source.state).toBe("running");
+    expect((await source.inspect()).state).toBe("running");
+
+    expect(await snapshot.inspect()).toMatchObject({
+      preserve: "filesystem+memory",
+      restoreExecution: "resume",
+      state: "ready",
+      mountHandling: "none",
+      restore: { networkPolicies: ["internet"], resources: false, mounts: false },
+    });
+
+    const listed = await client.snapshots.list({ limit: 10 });
+    expect(listed.coverage).toBe("provider-scope");
+    expect(listed.items.map((item) => item.reference)).toEqual([
+      { ...snapshot.reference, ownership: "unknown" },
+    ]);
+
+    const restored = await snapshot.restore();
+    expect(restored.id).not.toBe(source.id);
+    expect(snapshotCalls(fixture, "CreateVmFromSnapshot").at(-1)?.request).toMatchObject({
+      snapshot: snapshot.reference.nativeId,
+      org: "main",
+      isolated: true,
+    });
+    const machine = structuredClone(fixture.machines.get(restored.id));
+    expect(machine).toMatchObject({
+      botProtection: false,
+      sourceInfo: { kind: "snapshot", version: 1, id: snapshot.reference.nativeId },
+    });
+    expect(machine?.deleteAtMs).toBeGreaterThan(Date.now());
+    expect((await restored.inspect()).state).toBe("running");
+
+    await snapshot.delete();
+    expect(fixture.snapshots.size).toBe(0);
+    await expect(snapshot.inspect()).rejects.toMatchObject({ code: "NOT_FOUND" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("a snapshot saved again outside Sandbar no longer restores or deletes by its old reference", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const source = await client.sandboxes.create();
+    const { snapshot } = await source.snapshot();
+    fixture.resaveSnapshot(snapshot.reference.nativeId);
+
+    await expect(snapshot.inspect()).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(snapshot.restore()).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(snapshot.delete()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(snapshotCalls(fixture, "CreateVmFromSnapshot")).toHaveLength(0);
+    expect(snapshotCalls(fixture, "DeleteSnapshot")).toHaveLength(0);
+    expect(fixture.snapshots.size).toBe(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("a restore that boots a newer snapshot version is unknown and keeps the machine identity", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const source = await client.sandboxes.create();
+    const { snapshot } = await source.snapshot();
+    fixture.restoreNextFromLaterVersion();
+
+    const error = await snapshot.restore().then(
+      () => undefined,
+      (failure: Error) => failure,
+    );
+
+    expect(error).toBeInstanceOf(OutcomeUnknownError);
+    const restored = [...fixture.machines.values()].find((machine) => machine.sourceInfo);
+    expect(error).toMatchObject({
+      outcome: { kind: "snapshot_restore", sandbox: { nativeId: restored?.vmId } },
+    });
+    expect(snapshotCalls(fixture, "CreateVmFromSnapshot")).toHaveLength(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("a lost capture response recovers by the checkpointed name without capturing again", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const source = await client.sandboxes.create();
+    fixture.loseNextSnapshotResponse();
+    const { snapshot } = await source.snapshot();
+
+    expect(snapshotCalls(fixture, "CreateSnapshot")).toHaveLength(1);
+    expect(snapshot.reference).toMatchObject({ generation: "1", ownership: "verified-created" });
+    expect(fixture.snapshots.get(snapshot.reference.nativeId)?.status).toBe("ready");
+  } finally {
+    await client.close();
+  }
+});
+
+test("a failed capture is unknown and names the snapshot to clean up", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const source = await client.sandboxes.create();
+    fixture.failNextSnapshot();
+
+    const error = await source.snapshot().then(
+      () => undefined,
+      (failure: Error) => failure,
+    );
+
+    const [id] = fixture.snapshots.keys();
+
+    expect(error).toBeInstanceOf(OutcomeUnknownError);
+    expect(error).toMatchObject({
+      outcome: { kind: "snapshot_capture", status: "unknown", snapshot: { nativeId: id } },
+    });
+    expect(snapshotCalls(fixture, "CreateSnapshot")).toHaveLength(1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("capture and restore reject what boxd cannot do before any native mutation", async () => {
+  const { fixture, connect } = await setup();
+  const client = await connect();
+
+  try {
+    const source = await client.sandboxes.create();
+
+    for (const request of [
+      { requirements: { preserve: "filesystem" as const } },
+      { requirements: { maxInterruption: "none" as const } },
+      { retention: { cleanupAfterSeconds: 3600 } },
+    ])
+      await expect(source.snapshot(request)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+
+    const volume = await client.volumes.create({ name: "workspace" });
+    const mounted = await client.sandboxes.create({ mounts: [volume.at("/workspace")] });
+    await expect(mounted.snapshot()).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(snapshotCalls(fixture, "CreateSnapshot")).toHaveLength(0);
+
+    const { snapshot } = await source.snapshot();
+    await expect(snapshot.restore({ network: "blocked" })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+    });
+    await expect(snapshot.restore({ resources: { vcpu: 4 } })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+    });
+    expect(snapshotCalls(fixture, "CreateVmFromSnapshot")).toHaveLength(0);
+    await mounted.destroy({ storage: "allow-unconfirmed" });
   } finally {
     await client.close();
   }

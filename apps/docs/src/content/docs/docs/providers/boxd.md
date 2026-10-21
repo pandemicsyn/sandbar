@@ -59,7 +59,7 @@ Create-time `env` is rejected with `UnsupportedFeatureError` before allocation, 
 | HTTP previews                | Public routes on configured ports. Protected previews are not supported.          | No          |
 | Images                       | Boots OCI images. Image builds and image get, list and delete are not supported.  | No          |
 | Network controls             | Not supported. Internet access is always on.                                      | —           |
-| Snapshots                    | Not supported.                                                                    | —           |
+| Snapshots                    | Memory and disk capture, restore into a new machine, inspect, list and delete.    | No          |
 | Volumes and mounts           | Independent disks: create, inspect, list, delete and whole-disk mounts at create. | No          |
 | Listing sandboxes and images | Lists every machine in the org, with no ownership claim. Images: not supported.   | No          |
 
@@ -79,6 +79,12 @@ Public previews are the default. To route more ports, set `preview: { access: "p
 
 With `preview: { access: "protected" }`, preview lookup fails as unsupported. This does not make boxd's own ingress private: native traffic can still reach or wake a machine. See [preview access](/docs/guides/preview-access/).
 
+## Snapshots
+
+`box.snapshot()` saves memory and disk together. boxd pauses the machine briefly and it keeps running; a restored machine resumes the captured processes under a new ID, with its own name, URL and private IP. Processes that cached the old hostname or address keep the stale value.
+
+boxd keeps only the latest version under a snapshot name, so every capture gets its own name and the reference remembers the captured version. If someone saves that snapshot again outside Sandbar, `inspect()`, `restore()` and `delete()` fail with `CONFLICT` before changing anything. A restore keeps the captured size and `internet` networking, applies your configured lifetime and preview settings, and cannot attach disks. Snapshots do not expire, so delete them when you are done. See [snapshots and volumes](/docs/guides/snapshots-and-volumes/).
+
 ## Storage and recovery
 
 `suspend()` uses boxd's native pause, and `resume()` wakes the machine under the same ID. Inspecting or reopening does not wake it; inbound traffic can.
@@ -91,7 +97,7 @@ A refused create carries a matching code and boxd's reason, for example `CAPACIT
 
 - Internet access is always on; blocked and allowlisted networks are rejected.
 - Public previews are reachable by anyone with the URL, and protected previews are unsupported.
-- Snapshots are rejected before anything is created: boxd keeps only the latest snapshot, so an exact saved version cannot be restored or deleted safely.
+- Snapshots of machines with mounted disks are rejected, and restores cannot attach disks or change the captured size.
 - Create-time `env`, regions, labels, image builds and image management are unsupported.
 - Buffered command output, stdin and file transfers are limited to 1 MiB; most filesystem operations need Python 3.
 - Disks survive destroy and must be deleted explicitly. Closing the client destroys nothing.
