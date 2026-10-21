@@ -50,6 +50,18 @@ try {
 
 `saveResource` and `removeSavedResource` represent your application's storage functions. Save references in durable, trusted storage. Remove the saved record only after deletion is confirmed. If removing the record fails, mark it as deleted during recovery instead of repeating the provider delete.
 
+`restore()` also takes the create options `env`, `labels` and `lifecycle: { lifetimeSeconds }` for the new sandbox:
+
+```ts
+const restored = await snapshot.restore({
+  env: { API_TOKEN: process.env.API_TOKEN! },
+  labels: { job: "ci-42" },
+  lifecycle: { lifetimeSeconds: 1800 },
+});
+```
+
+An adapter that can't apply one of them on restore rejects it before allocation with `UnsupportedFeatureError`, and `(await sandbar.capabilities()).snapshots.restore` lists what it accepts under `options`. Environment values never enter references, messages or traces. See [current combinations](#current-combinations) for each adapter.
+
 Restore uses the connection's configured network policy when you omit `network`. An explicit override must be supported by that connection. By default, restore also requires the new sandbox to have a lifecycle independent of the source and snapshot. Unsupported restore requirements reject before allocation with `UnsupportedFeatureError`; `unmetRequirements` explains why.
 
 Snapshot deletion is separate from destroying the source or restored sandbox. If restore or sandbox cleanup fails, keep the snapshot reference until you have resolved the failure. Do not delete a snapshot that may still be needed by compute.
@@ -182,16 +194,17 @@ The [compiled storage example](https://github.com/pandemicsyn/sandbar/blob/main/
 
 ### Current combinations
 
-| Workflow                               | Current support                                                                                                            |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Capture and restore private state      | Daytona, Vercel (disposable mode), Runloop, Modal and Boat filesystem capture; E2B and boxd filesystem and memory capture. |
-| Capture a sandbox with external mounts | Unsupported by every adapter.                                                                                              |
-| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.        |
-| Override restore resource sizes        | Unsupported by Daytona, E2B, boxd, Modal and Boat; empty overrides are treated as omitted.                                 |
-| Create a sandbox with volumes          | Daytona writable mounts with optional subpaths; boxd whole-disk read-only or writable mounts.                              |
-| Manage E2B volumes                     | Private-beta API mapping; live creation was blocked by account HTTP 403. Sandbar create-time mounts are unsupported.       |
-| Manage Vercel volumes                  | Unsupported.                                                                                                               |
-| Copy or version a volume               | Unsupported by Daytona, E2B and boxd.                                                                                      |
+| Workflow                               | Current support                                                                                                                                                                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capture and restore private state      | Daytona, Vercel (disposable mode), Runloop, Modal and Boat filesystem capture; E2B and boxd filesystem and memory capture.                                                                                                              |
+| Capture a sandbox with external mounts | Unsupported by every adapter.                                                                                                                                                                                                           |
+| Restore with selected volumes          | Daytona only: known mount-free filesystem snapshot, fresh execution and `internet` or `daytona-default` networking.                                                                                                                     |
+| Restore with `env`, `labels`, lifetime | All three on Daytona, E2B, Modal and Vercel (Vercel lifetime only in disposable mode; Daytona and E2B env only for filesystem snapshots); Runloop env and lifetime (lifetime unless `idleSeconds` is set); Boat and boxd lifetime only. |
+| Override restore resource sizes        | Unsupported by Daytona, E2B, boxd, Modal and Boat; empty overrides are treated as omitted.                                                                                                                                              |
+| Create a sandbox with volumes          | Daytona writable mounts with optional subpaths; boxd whole-disk read-only or writable mounts.                                                                                                                                           |
+| Manage E2B volumes                     | Private-beta API mapping; live creation was blocked by account HTTP 403. Sandbar create-time mounts are unsupported.                                                                                                                    |
+| Manage Vercel volumes                  | Unsupported.                                                                                                                                                                                                                            |
+| Copy or version a volume               | Unsupported by Daytona, E2B and boxd.                                                                                                                                                                                                   |
 
 boxd volumes and mounts have deterministic test coverage but no recorded live storage pass. Vercel has no recorded live acceptance. See [tested provider support](/docs/providers/support/) for evidence per workflow.
 

@@ -72,6 +72,8 @@ export function e2bState(input: {
   transport: E2BTransport;
   scopeMarker: string;
   timeoutSeconds: number;
+  /** The longest per-sandbox lifetime E2B accepts. */
+  maxLifetimeSeconds: number;
   allowPublicTraffic?: boolean;
   /** What a capture keeps; filesystem-only sends `memory: false`. */
   snapshotPreserve: Preserve;
@@ -903,7 +905,15 @@ export function e2bState(input: {
     },
     snapshotRestore: {
       recovery: { version: 1, token: restoreToken },
+      // A memory snapshot resumes its processes with the environment they were captured with.
+      options: {
+        env: !memory,
+        labels: true,
+        lifetime: { minSeconds: 1, maxSeconds: input.maxLifetimeSeconds },
+      },
       async prepare(value) {
+        if (Object.keys(value.request.labels ?? {}).some((key) => key.startsWith("sandbar_")))
+          throw new AdapterError("INVALID_ARGUMENT", "Reserved E2B metadata key");
         await restorePreflight(value);
 
         return value;
@@ -930,20 +940,25 @@ export function e2bState(input: {
           return ctx.reject("UNAVAILABLE", "Restore cancelled before dispatch");
         }
 
-        const id = await transport.create({
+        const request: Parameters<E2BTransport["create"]>[0] = {
           templateId: selector,
           metadata: {
+            ...value.request.labels,
             sandbar_scope: input.scopeMarker,
             sandbar_submission: ctx.submissionId,
             sandbar_operation: ctx.operationId,
             sandbar_template: selector,
             sandbar_snapshot: selector,
           },
-          timeoutMs: input.timeoutSeconds * 1000,
+          // E2B's shortest timeout is one minute; shorter lifetimes round up to it.
+          timeoutMs: Math.max(60, value.request.lifetimeSeconds ?? input.timeoutSeconds) * 1000,
           allowInternetAccess: value.request.networkPolicy === "internet",
           allowPublicTraffic: token.allowPublicTraffic,
           signal: ctx.signal,
-        });
+        };
+
+        if (value.request.env) request.env = value.request.env;
+        const id = await transport.create(request);
 
         token.sandboxId = id;
         token.state = "accepted";

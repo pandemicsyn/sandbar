@@ -541,11 +541,11 @@ export function createBoxdAdapter(
       const launch = async (
         source:
           | { image: string; mounts: MountSpec[]; lifetimeSeconds?: number }
-          | { snapshot: { id: string; version: number } },
+          | { snapshot: { id: string; version: number }; lifetimeSeconds?: number },
         ctx: AttemptContext<Created>,
       ) => {
         const lifetimeSeconds =
-          "image" in source && source.lifetimeSeconds !== undefined
+          source.lifetimeSeconds !== undefined
             ? machineLifetime(source.lifetimeSeconds)
             : config.lifetimeSeconds;
 
@@ -1450,6 +1450,8 @@ export function createBoxdAdapter(
         },
         snapshotRestore: {
           recovery: { version: 1, token: CreateToken },
+          // boxd has no create-time env or labels; the lifetime applies as on create.
+          options: { lifetime: { minSeconds: 1, maxSeconds: Number.MAX_SAFE_INTEGER } },
           async prepare(input, ctx) {
             if (input.request.resources || input.request.mounts?.length)
               throw new AdapterError(
@@ -1470,6 +1472,7 @@ export function createBoxdAdapter(
                   id: input.snapshot.nativeId,
                   version: checkedSnapshot(input.snapshot)!,
                 },
+                lifetimeSeconds: input.request.lifetimeSeconds,
               },
               ctx,
             ),

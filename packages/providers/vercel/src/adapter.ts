@@ -2017,8 +2017,20 @@ export function createVercelAdapter(
         },
         snapshotRestore: {
           recovery: { version: 1, token: createToken },
+          // A restore boots a new session from the filesystem snapshot, so options apply as on create.
+          options: { env: true, labels: true, lifetime: createLifetime },
           prepare: async (input, ctx) => {
             checkSnapshot(input.snapshot);
+            const labels = Object.keys(input.request.labels ?? {});
+
+            if (labels.length > 4)
+              throw new AdapterError(
+                "INVALID_ARGUMENT",
+                "Vercel supports at most four user labels",
+              );
+
+            if (labels.some((key) => key.startsWith("sandbar")))
+              throw new AdapterError("INVALID_ARGUMENT", "Reserved correlation label");
 
             if (
               input.request.networkPolicy !== networkPolicy ||
@@ -2051,7 +2063,13 @@ export function createVercelAdapter(
             const mutation = makeCreation(input.snapshot.nativeId);
 
             return mutation.submit(
-              { image: { kind: "prepared", value: image }, networkPolicy },
+              {
+                image: { kind: "prepared", value: image },
+                networkPolicy,
+                labels: input.request.labels,
+                env: input.request.env,
+                lifetimeSeconds: input.request.lifetimeSeconds,
+              },
               ctx,
             );
           },

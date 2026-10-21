@@ -604,8 +604,17 @@ export function createModalAdapter(
           },
         },
         snapshotRestore: {
+          // Modal snapshots hold the filesystem only, so a restore boots fresh like a create.
+          options: {
+            env: true,
+            labels: true,
+            lifetime: { minSeconds: 1, maxSeconds: MAX_LIFETIME_SECONDS },
+          },
           async prepare(input) {
             const { request } = input;
+
+            if (Object.keys(request.labels ?? {}).some((key) => key.startsWith("sandbar_")))
+              throw new AdapterError("INVALID_ARGUMENT", "Reserved Modal tag prefix");
 
             if (request.resources || request.mounts?.length)
               throw new AdapterError(
@@ -620,7 +629,15 @@ export function createModalAdapter(
             return input;
           },
           async submit(input, ctx) {
-            return submitCreate({ imageId: input.snapshot.nativeId, labels: {} }, ctx);
+            return submitCreate(
+              {
+                imageId: input.snapshot.nativeId,
+                labels: input.request.labels ?? {},
+                env: input.request.env,
+                lifetimeSeconds: input.request.lifetimeSeconds,
+              },
+              ctx,
+            );
           },
           async observe(attempt) {
             if (attempt.resource) checkSnapshot(attempt.resource);

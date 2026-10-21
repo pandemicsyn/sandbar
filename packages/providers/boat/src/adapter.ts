@@ -1408,6 +1408,8 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
         },
         snapshotRestore: {
           recovery: { version: 1, token: CreateToken },
+          // Boat has no create-time env or labels; the archive timer applies as on create.
+          options: { lifetime: { minSeconds: 60, maxSeconds: MAX_TTL_SECONDS } },
           async prepare(input, ctx) {
             if (input.request.resources || input.request.mounts?.length)
               throw new AdapterError(
@@ -1425,7 +1427,12 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
             return input;
           },
           // Boat restores by name; prepare checked the name still holds the pinned capture.
-          submit: (input, ctx) => launch({ snapshot: input.snapshot.nativeId }, ctx),
+          submit: (input, ctx) =>
+            launch(
+              { snapshot: input.snapshot.nativeId },
+              ctx,
+              input.request.lifetimeSeconds ?? config.lifecycle.lifetimeSeconds,
+            ),
           async observe(attempt, ctx) {
             if (!attempt.resource)
               return ctx.unknown("Boat restore snapshot identity is unavailable; do not replay");

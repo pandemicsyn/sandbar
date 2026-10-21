@@ -21,6 +21,7 @@ import {
 import { LifecycleInput, SuspendResult, ResumeResult, RenewInput, RenewResult } from "./lifecycle";
 import { z } from "zod";
 import { lifetimeProblem } from "./lifetime";
+import { restoreOptionProblem } from "./state";
 import {
   CreateEnv,
   CreateSandboxInput,
@@ -74,7 +75,7 @@ export type RuntimeSession = Omit<
   resume?: unknown;
   renew?: unknown;
   snapshotCapture?: unknown;
-  snapshotRestore?: { mountInput?: "specs" };
+  snapshotRestore?: { mountInput?: "specs"; options?: import("./state").RestoreOptions };
   snapshotDelete?: unknown;
   imageDelete?: unknown;
   volumeCreate?: unknown;
@@ -590,6 +591,17 @@ function checkCapability(
 
     if (!value.request.mounts?.length && session.snapshotRestore?.mountInput !== "specs")
       delete value.request.mounts;
+
+    if (value.request.env && !Object.keys(value.request.env).length) delete value.request.env;
+
+    if (value.request.labels && !Object.keys(value.request.labels).length)
+      delete value.request.labels;
+
+    if (value.request.env && !CreateEnv.safeParse(value.request.env).success)
+      throw new AdapterError("INVALID_ARGUMENT", "Invalid restore env");
+    const problem = restoreOptionProblem(session.snapshotRestore?.options, value.request);
+
+    if (problem) throw new AdapterError("UNSUPPORTED", problem);
 
     return value;
   }

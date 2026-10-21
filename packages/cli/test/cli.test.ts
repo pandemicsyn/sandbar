@@ -70,6 +70,8 @@ type FakeResource = {
   ref: { nativeId: string };
   state: "running" | "destroyed";
   lifetimeSeconds?: number;
+  labels?: Record<string, string>;
+  env?: Record<string, string>;
 };
 
 async function fakeResources(): Promise<FakeResource[]> {
@@ -2406,9 +2408,6 @@ describe("snapshots", () => {
     for (const extra of [
       ["--image", "python:3.12"],
       ["--prepared", "fake-starter"],
-      ["--ttl", "1h"],
-      ["--label", "a=b"],
-      ["--env", "A=1"],
     ]) {
       const result = await cli(["create", "--snapshot", "deps", ...extra, "--json"]);
 
@@ -2436,5 +2435,34 @@ describe("snapshots", () => {
     });
     expect((await cli(["run", "--snapshot", "deps", "--env", "A=1", "--", "true"])).code).toBe(0);
     expect((await fakeResources()).filter((box) => box.state === "running")).toHaveLength(1);
+  });
+
+  test("a restore takes --ttl, --label and --env like a create", async () => {
+    await warmSandbox();
+    await cli(["snapshot", "create", "web", "--name", "deps"]);
+
+    const restored = await cli([
+      "create",
+      "--snapshot",
+      "deps",
+      "--name",
+      "ci",
+      "--ttl",
+      "1h",
+      "--label",
+      "team=ci",
+      "--env",
+      "TOKEN=restore-secret",
+    ]);
+
+    expect(restored).toMatchObject({ code: 0, stdout: "ci\n" });
+    expect((await fakeResources()).at(-1)).toMatchObject({
+      lifetimeSeconds: 3600,
+      labels: { team: "ci" },
+      env: { TOKEN: "restore-secret" },
+    });
+    expect(await readFile(join(dir, "state", "sandboxes", "ci.json"), "utf8")).not.toContain(
+      "restore-secret",
+    );
   });
 });

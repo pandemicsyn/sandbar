@@ -4,6 +4,7 @@ import {
   ResourceReference,
   SandbarError,
   type SandbarClient,
+  type CreateInput,
   type SandboxHandle,
   type SnapshotInfo,
   type SnapshotResult,
@@ -580,18 +581,17 @@ export async function snapshotSource(session: Session, name: string): Promise<Sn
   return record;
 }
 
-/** Start a sandbox from a recorded snapshot on the connection for its profile. */
+/** Start a sandbox from a recorded snapshot with the create's network, env, labels and lifetime. */
 export async function restoreSnapshot(
   session: Session,
   client: SandbarClient<true>,
   record: SnapshotRecord,
-  network: string | undefined,
+  input: CreateInput,
 ): Promise<SandboxHandle<true>> {
   const snapshot = await client.snapshots.get(SnapshotReference.parse(record.reference));
+  const { network, env, labels, lifecycle } = input;
 
-  return snapshot.restore(network === undefined ? {} : { network }, {
-    signal: session.ctx.signal,
-  });
+  return snapshot.restore({ network, env, labels, lifecycle }, { signal: session.ctx.signal });
 }
 
 export const snapshotActions = ["create", "ls", "inspect", "rm", "forget"] as const;

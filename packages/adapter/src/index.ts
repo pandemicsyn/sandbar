@@ -406,6 +406,8 @@ export type AdapterSession<
   snapshotRestore?: Mutation<import("./resources").SnapshotRestoreInput, CreateValue> & {
     /** Opt into the coordinated array input; absent hooks receive mount-free requests only. */
     mountInput?: "specs";
+    /** Create options this restore applies (env, labels, lifetime); others reject before prepare. */
+    options?: import("./state").RestoreOptions;
   };
   snapshotDelete?: Mutation<ResourceReference, import("./resources").ArtifactDeletionResult>;
   snapshotInspect?: (

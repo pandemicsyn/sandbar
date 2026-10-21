@@ -493,6 +493,12 @@ test("Daytona hot capture keeps a running Linux VM's memory without stopping it"
       source: { id: "source", class: "linux-vm" },
     });
 
+    // Resumed processes keep their captured environment, so restore-time env rejects first.
+    await expect(result.snapshot.restore({ env: { TOKEN: "x" } })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      effect: "none",
+    });
+
     const fresh = await f.connect(undefined, "rotated-key");
 
     try {
