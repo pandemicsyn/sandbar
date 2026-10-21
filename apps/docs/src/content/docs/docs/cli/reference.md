@@ -203,7 +203,7 @@ sandbar sh web -- '-n is fine here'
 Create a sandbox, run one command, and always destroy it.
 
 ```sh
-sandbar run [create flags] [exec flags] [--keep] -- <command> [args...]
+sandbar run [create flags] [exec flags] [--keep] [--push <path>] -- <command> [args...]
 ```
 
 | Flag                   | Description                                                                     |
@@ -223,6 +223,9 @@ sandbar run [create flags] [exec flags] [--keep] -- <command> [args...]
 | `--max-output <size>`  | Captured output limit for buffered and --json output, e.g. 1m                   |
 | `--no-stream`          | Print the output when the command ends instead of as it arrives                 |
 | `--keep`               | Keep the sandbox and print its name on stderr                                   |
+| `--push <path>`        | Send a local folder to ~/work first and run the command there                   |
+| `--exclude <glob>`     | Skip matching paths (repeatable; a pattern without / matches any name)          |
+| `--include-ignored`    | Send every file, not only git-tracked and unignored ones                        |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 
@@ -231,6 +234,7 @@ Examples:
 ```sh
 sandbar run -- python3 -c 'print(2 + 2)'
 sandbar run --network internet -- curl -sI https://example.com
+sandbar run --push . --timeout 15m -- sh -c 'npm ci && npm test'
 ```
 
 ## image
@@ -261,22 +265,46 @@ sandbar image forget python-3-12
 
 ## cp
 
-Copy one file to or from a sandbox.
+Copy files or directories to or from a sandbox.
 
 ```sh
-sandbar cp <src> <dst>   (one side is <sandbox>:/path)
+sandbar cp [-r] <src> <dst>   (one side is <sandbox>:/path)
 ```
 
-| Flag              | Description                                       |
-| ----------------- | ------------------------------------------------- |
-| `--no-clobber`    | Fail instead of overwriting a file in the sandbox |
-| `-r, --recursive` | Copy directories (not available yet)              |
+| Flag               | Description                                                            |
+| ------------------ | ---------------------------------------------------------------------- |
+| `--no-clobber`     | Fail instead of overwriting an existing file                           |
+| `-r, --recursive`  | Copy directories as one tar archive (needs tar in the sandbox)         |
+| `--exclude <glob>` | Skip matching paths (repeatable; a pattern without / matches any name) |
 
 Examples:
 
 ```sh
 sandbar cp ./app.py web:/work/app.py
 sandbar cp web:/work/out.json ./out.json
+sandbar cp -r ./src web:/work --exclude node_modules
+sandbar cp -r web:/work/coverage ./coverage
+```
+
+## push
+
+Send a local folder's git-tracked and unignored files into a sandbox.
+
+```sh
+sandbar push <sandbox>[:/dir] [path]   (default: . to ~/work in the sandbox)
+```
+
+| Flag                | Description                                                            |
+| ------------------- | ---------------------------------------------------------------------- |
+| `--exclude <glob>`  | Skip matching paths (repeatable; a pattern without / matches any name) |
+| `--include-ignored` | Send every file, not only git-tracked and unignored ones               |
+
+Examples:
+
+```sh
+sandbar push ci
+sandbar push ci:/srv/app ./app --exclude '*.log'
+sandbar exec ci --cwd /srv/app -- npm test
 ```
 
 ## cat

@@ -1,9 +1,22 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Json } from "@sandbar-sdk/adapter";
 import { startFakeProviderServer } from "@sandbar/provider-fake/server";
+import { readTar } from "../src/tar";
+import { defaultPushDir, scripts, shellQuote } from "../src/transfer";
 
 const token = "local-test-token-12345";
 
@@ -1745,5 +1758,244 @@ describe("streaming exec output", () => {
       stdout: "building\n",
       stderr: "1 failed\n",
     });
+  });
+});
+
+describe("directory transfer", () => {
+  const staging = "/tmp/sandbar.fixture";
+
+  async function seedCommand(
+    command: Json,
+    exitCode: number,
+    stdout: string,
+    stderr = "",
+    cwd?: string,
+  ) {
+    const output = {
+      exitCode,
+      stdoutBase64: Buffer.from(stdout).toString("base64"),
+      stderrBase64: Buffer.from(stderr).toString("base64"),
+    };
+
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "exec",
+      command: cwd ? { command, cwd, ...output } : { command, ...output },
+    });
+  }
+
+  const seedScript = (script: string, exitCode: number, stdout: string, stderr = "") =>
+    seedCommand({ kind: "shell", script }, exitCode, stdout, stderr);
+
+  /** The archive the CLI staged in the fake sandbox, as path → text (or link target). */
+  async function staged(): Promise<Record<string, string>> {
+    const response = await fetch(new URL("/_test/state", server.url), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const files: Record<string, string> = (await response.json()).resources[0].files;
+
+    const parts = Object.keys(files)
+      .filter((path) => path.startsWith(`${staging}/part.`))
+      .sort();
+
+    const contents: Record<string, string> = {};
+
+    async function* bytes() {
+      for (const part of parts) yield new Uint8Array(Buffer.from(files[part]!, "base64"));
+    }
+
+    await readTar(bytes(), async (entry, body) => {
+      const chunks: Uint8Array[] = [];
+
+      for await (const chunk of body) chunks.push(chunk);
+      contents[entry.path] =
+        entry.kind === "symlink"
+          ? `-> ${entry.link}`
+          : entry.kind === "directory"
+            ? "dir"
+            : Buffer.concat(chunks).toString();
+    });
+
+    return contents;
+  }
+
+  async function gitRepo(): Promise<string> {
+    const repo = join(dir, "repo");
+    await mkdir(join(repo, "src"), { recursive: true });
+    await writeFile(join(repo, ".gitignore"), "*.log\n");
+    await writeFile(join(repo, "src", "main.ts"), "main\n");
+    await writeFile(join(repo, "debug.log"), "ignored\n");
+    await writeFile(join(repo, "notes.md"), "untracked\n");
+    await symlink("src/main.ts", join(repo, "entry"));
+
+    for (const args of [
+      ["init", "-q"],
+      ["add", ".gitignore", "src", "entry"],
+    ]) {
+      const child = Bun.spawn(["git", ...args], { cwd: repo, stdout: "ignore", stderr: "ignore" });
+
+      expect(await child.exited).toBe(0);
+    }
+
+    return repo;
+  }
+
+  test("push sends git-tracked and unignored files and unpacks them with one command", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await gitRepo();
+    await seedScript(scripts.prepare(defaultPushDir), 0, `${staging}\nnone\n`);
+    await seedScript(scripts.unpack(staging, defaultPushDir), 0, "/home/user/work\n");
+
+    const result = await cli(["push", "box", "repo", "--json"]);
+
+    expect(result.code).toBe(0);
+    expect(envelope(result)).toEqual({
+      ok: true,
+      data: {
+        sandbox: "box",
+        path: "/home/user/work",
+        files: 3,
+        directories: 1,
+        symlinks: 1,
+        bytes: 21,
+      },
+    });
+    expect(await staged()).toEqual({
+      ".gitignore": "*.log\n",
+      entry: "-> src/main.ts",
+      "notes.md": "untracked\n",
+      "src/": "dir",
+      "src/main.ts": "main\n",
+    });
+  });
+
+  test("push to an explicit folder honors --exclude and prints the folder", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    const repo = await gitRepo();
+    await seedScript(scripts.prepare(shellQuote("/srv/app")), 0, `${staging}\nnone\n`);
+    await seedScript(scripts.unpack(staging, shellQuote("/srv/app")), 0, "/srv/app\n");
+
+    const result = await cli(["push", "box:/srv/app/", "--exclude", "*.md"], {}, undefined, repo);
+
+    expect(result).toMatchObject({ code: 0, stdout: "/srv/app\n" });
+    expect(Object.keys(await staged())).not.toContain("notes.md");
+  });
+
+  test("a sandbox without tar fails clearly before anything is sent", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await gitRepo();
+    await seedScript(scripts.prepare(defaultPushDir), 127, "", "tar is not installed\n");
+
+    const result = await cli(["push", "box", "repo", "--json"]);
+
+    expect(result.code).toBe(4);
+    expect(envelope(result).error).toMatchObject({
+      code: "UNSUPPORTED",
+      message: "tar is not installed in sandbox box",
+    });
+    expect(await staged()).toEqual({});
+  });
+
+  test("cp -r into an existing sandbox folder nests the copy like cp", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await mkdir(join(dir, "site", "css"), { recursive: true });
+    await writeFile(join(dir, "site", "index.html"), "<p>hi</p>\n");
+    await writeFile(join(dir, "site", "css", "a.css"), "p{}\n");
+    await writeFile(join(dir, "site", "debug.log"), "skip\n");
+    const nested = `${shellQuote("/work")}/${shellQuote("site")}`;
+    await seedScript(scripts.prepare(shellQuote("/work")), 0, `${staging}\ndirectory\n`);
+    await seedScript(scripts.unpack(staging, nested), 0, "/work/site\n");
+
+    const result = await cli(["cp", "-r", "site", "box:/work", "--exclude", "*.log", "--json"]);
+
+    expect(envelope(result).data).toMatchObject({ path: "/work/site", files: 2, directories: 1 });
+    expect(await staged()).toEqual({
+      "css/": "dir",
+      "css/a.css": "p{}\n",
+      "index.html": "<p>hi</p>\n",
+    });
+  });
+
+  test("cp -r out of a sandbox writes the tree locally with modes and links", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    const source = join(dir, "remote");
+    await mkdir(join(source, "out", "sub"), { recursive: true });
+    await writeFile(join(source, "out", "run.sh"), "echo ok\n", { mode: 0o755 });
+    await writeFile(join(source, "out", "sub", "junit.xml"), "<testsuite/>\n");
+    await symlink("sub/junit.xml", join(source, "out", "latest"));
+    const tar = Bun.spawn(["tar", "-c", "-f", join(dir, "out.tar"), "out"], { cwd: source });
+
+    expect(await tar.exited).toBe(0);
+    expect((await cli(["cp", join(dir, "out.tar"), `box:${staging}/part.aaaaaa`])).code).toBe(0);
+    await seedScript(scripts.pack("/work/out", true), 0, `${staging}\npart.aaaaaa\n`);
+    await seedScript(scripts.cleanup(staging), 0, "");
+    await mkdir(join(dir, "results"));
+
+    const result = await cli(["cp", "-r", "box:/work/out/", "results", "--json"]);
+
+    expect(envelope(result).data).toEqual({
+      sandbox: "box",
+      path: join(dir, "results", "out"),
+      files: 2,
+      directories: 2,
+      symlinks: 1,
+      bytes: 21,
+    });
+    expect(await readFile(join(dir, "results", "out", "sub", "junit.xml"), "utf8")).toBe(
+      "<testsuite/>\n",
+    );
+    expect((await stat(join(dir, "results", "out", "run.sh"))).mode & 0o777).toBe(0o755);
+    expect(await readlink(join(dir, "results", "out", "latest"))).toBe("sub/junit.xml");
+  });
+
+  test("cp -r reports a missing sandbox path as not found", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await seedScript(scripts.pack("/work/none", true), 66, "", "No such file or directory\n");
+
+    const result = await cli(["cp", "-r", "box:/work/none", "copy", "--json"]);
+
+    expect(result.code).toBe(3);
+    expect(envelope(result).error.code).toBe("NOT_FOUND");
+  });
+
+  test("a directory without -r, or / itself, is a usage error", async () => {
+    await cli(["create", "--name", "box", "--prepared", "fake-starter"]);
+    await mkdir(join(dir, "folder"));
+
+    expect((await cli(["cp", "folder", "box:/work"])).stderr).toContain("pass -r to copy it");
+    expect((await cli(["cp", "-r", "box:/", "copy"])).code).toBe(2);
+    expect((await cli(["cp", "--exclude", "x", "a", "box:/b"])).code).toBe(2);
+  });
+
+  test("run --push sends the folder, runs there and destroys the sandbox", async () => {
+    const repo = await gitRepo();
+    await seedScript(scripts.prepare(defaultPushDir), 0, `${staging}\nnone\n`);
+    await seedScript(scripts.unpack(staging, defaultPushDir), 0, "/home/user/work\n");
+    await seedCommand(
+      { kind: "argv", argv: ["cat", "src/main.ts"] },
+      0,
+      "main\n",
+      "",
+      "/home/user/work",
+    );
+
+    const result = await cli(
+      ["run", "--prepared", "fake-starter", "--push", ".", "--", "cat", "src/main.ts"],
+      {},
+      undefined,
+      repo,
+    );
+
+    expect(result).toMatchObject({ code: 0, stdout: "main\n" });
+    expect(result.stderr).toContain("pushed 3 file(s) to /home/user/work");
+    expect((await fakeResources()).map((resource) => resource.state)).toEqual(["destroyed"]);
+  });
+
+  test("run --push checks the local folder before creating anything", async () => {
+    const result = await cli(["run", "--prepared", "fake-starter", "--push", "nope", "--", "true"]);
+
+    expect(result.code).toBe(125);
+    expect(await fakeResources()).toEqual([]);
   });
 });

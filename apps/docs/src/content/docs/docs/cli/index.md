@@ -32,6 +32,18 @@ sandbar sh web 'ls -la /home/user | head'
 sandbar rm web
 ```
 
+To test a checkout in a throwaway sandbox, send it with `run --push`, and copy results out with `cp -r`:
+
+```sh
+sandbar run --push . --timeout 15m -- sh -c 'npm ci && npm test'
+
+sandbar create --name ci
+sandbar push ci                                  # prints /home/user/work
+sandbar exec ci --cwd /home/user/work -- npm test
+sandbar cp -r ci:/home/user/work/coverage ./coverage
+sandbar rm ci
+```
+
 For one command in a throwaway sandbox, `run` creates it, runs the command and always destroys it, even when the command fails or you press Ctrl-C (it then exits 130):
 
 ```sh
@@ -54,7 +66,9 @@ To keep provider settings in one place instead of environment variables, see [Co
 - `exec`, `sh` and `run` exit with the remote command's own exit code, so `sandbar exec web -- test -f /x && echo yes` works as expected. Failures of the CLI itself exit 125.
 - `exec`, `sh` and `run` print output as it arrives on Daytona, E2B and Vercel, so long builds and test runs show progress. On other providers, and with `--json` or `--no-stream`, the output is printed when the command ends; `--max-output` limits only that captured output. `--timeout` (default 5 minutes) applies either way: a streaming command that runs past it, or that you stop with Ctrl-C, is asked to terminate before the CLI exits.
 - `create --env K=V` (repeatable) and `--env-file <path>` set environment variables for every command in the sandbox; `exec --env` overrides a name for one command. `--env NAME` without a value copies `NAME` from your shell, which keeps secrets out of history. `.env` files hold `NAME=VALUE` lines; `#` comments (also after a value, following a space), blank lines and `export` are allowed. Unquoted values are trimmed; `"..."` values understand `\n`, `\"` and `\\`, and `'...'` values are literal. Multi-line values are not supported. Values are never written to the store, `--json` output or messages. Providers without sandbox-wide variables (boxd) reject `--env` on `create` before creating anything. On `exec`, `sh` and `run`, the same flags apply to that one command.
-- `cp` copies one file in either direction; the sandbox side is written `<name>:/absolute/path`. `cat <name>:/path` prints a file.
+- `cp` copies a file in either direction; the sandbox side is written `<name>:/absolute/path`. `cat <name>:/path` prints a file. With `-r` it copies a directory too, like `cp -r`: an existing destination folder receives a child of the same name. `--exclude <glob>` (repeatable) skips matching paths; a pattern without `/`, such as `node_modules` or `*.log`, matches a name at any depth.
+- `push <name>[:/dir] [path]` sends a local folder (default `.`) into the sandbox, by default to `work` under the sandbox user's home, and prints where it landed. In a git work tree it sends what git would: tracked files plus untracked files that are not ignored, so `.git`, `node_modules` and build output stay behind. `--include-ignored` sends every file. `run --push <path>` does the same in its new sandbox and runs the command in that folder unless you pass `--cwd`.
+- Directory copies keep file modes and symlinks. They move one tar archive and unpack it with one command, so the sandbox needs `tar` (without it they fail with exit 4 and `UNSUPPORTED` before anything is sent). Copying out never writes through a symlink, never leaves the destination folder, and drops setuid bits. Files deleted locally are not deleted from an earlier copy in the sandbox.
 - `--image <oci-ref>` boots an OCI image on boxd and Modal. E2B and Daytona need it built once with `sandbar image build <oci-ref>`; until then `--image` fails before creating anything, and `--build` builds it during the command instead. `--prepared <id>` picks a provider template or snapshot. `sandbar image ls`, `inspect`, `rm` and `forget` manage the recorded builds: `rm` deletes the template or snapshot on the provider and drops the record (only builds this CLI created, unless you pass `--force`), while `forget` only drops the record and lists what the provider still holds. `sandbar image ls --remote` lists the provider's own images. If `image rm` exits 6, the outcome is unknown; running it again asks the provider how the delete ended without resending it.
 
 ## JSON output for agents and scripts

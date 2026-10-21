@@ -1,5 +1,5 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join, posix, resolve } from "node:path";
 import {
   AdapterSandbox,
   Image,
@@ -40,6 +40,15 @@ import {
   type StateStore,
   type Versioned,
 } from "./store";
+import {
+  defaultPushDir,
+  download,
+  Excludes,
+  localTree,
+  shellQuote,
+  upload,
+  type LocalTree,
+} from "./transfer";
 import { parseDuration, parsePairs, parseSize } from "./units";
 
 /** Parsed command-line values for one command. */
@@ -1294,6 +1303,12 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   const request = createRequest(flags);
   const input = await execInput(session, flags, command);
   const keep = flags.bool("keep");
+  const pushPath = flags.string("push");
+
+  if (!pushPath && (flags.strings("exclude").length || flags.bool("include-ignored")))
+    throw usage("--exclude and --include-ignored need --push");
+  // Local files are read before anything is created, so a bad path costs nothing.
+  const tree = pushPath ? await pushTree(session, flags, pushPath) : undefined;
   const created = await createSandbox(session, { ...request, ifNotExists: false });
   const store = await session.store();
   const { out, signal } = session.ctx;
@@ -1310,7 +1325,18 @@ export async function runCommand(session: Session, flags: Flags): Promise<number
   if (created.unrecorded) failure = unrecordedError(created);
   else
     try {
-      result = await execute(session, created.box, input, flags);
+      const pushed = tree
+        ? await upload(created.box, created.record.name, tree, defaultPushDir, null, signal)
+        : undefined;
+
+      if (pushed) out.note(`pushed ${pushed.files} file(s) to ${pushed.path}`);
+      // The command runs in the pushed folder unless --cwd says otherwise.
+      result = await execute(
+        session,
+        created.box,
+        pushed && !input.cwd ? { ...input, cwd: pushed.path } : input,
+        flags,
+      );
     } catch (cause) {
       failure = cause;
     }
@@ -1379,31 +1405,86 @@ function remote(spec: string): { target: string; path: string } | null {
   return match ? { target: match[1]!, path: match[2]! } : null;
 }
 
+/** A sandbox path for a directory copy, normalized; the root itself cannot be copied. */
+function remotePath(path: string): string {
+  const normalized = posix.normalize(path).replace(/(.)\/+$/, "$1");
+
+  if (normalized === "/") throw usage("Copy a directory below /, not / itself");
+
+  return normalized;
+}
+
 export async function cpCommand(session: Session, flags: Flags): Promise<number> {
   if (flags.positionals.length !== 2)
-    throw usage("Usage: sandbar cp <src> <dst> (one side is <sandbox>:/path)");
+    throw usage("Usage: sandbar cp [-r] <src> <dst> (one side is <sandbox>:/path)");
+  const recursive = flags.bool("recursive");
+  const noClobber = flags.bool("no-clobber");
+  const excludes = new Excludes(flags.strings("exclude"));
 
-  if (flags.bool("recursive"))
-    throw usage("Recursive copy is not available yet; copy files one at a time");
+  if (flags.strings("exclude").length && !recursive) throw usage("--exclude needs -r");
   const [source, destination] = [flags.positionals[0]!, flags.positionals[1]!];
   const from = remote(source);
   const to = remote(destination);
+  const { out, signal } = session.ctx;
 
   if (Boolean(from) === Boolean(to)) throw usage("Exactly one side of cp must be <sandbox>:/path");
 
   if (to) {
     const local = resolve(session.ctx.cwd, source);
 
-    if ((await stat(local)).isDirectory())
-      throw usage(`${source} is a directory; recursive copy is not available yet`);
+    if ((await stat(local)).isDirectory()) {
+      if (!recursive) throw usage(`${source} is a directory; pass -r to copy it`);
+
+      if (noClobber)
+        throw usage("--no-clobber is not available when copying a directory into a sandbox");
+      const tree = await localTree(local, excludes, false, (text) => out.note(text));
+      const { record } = await findTarget(session, to.target);
+      const box = await session.reopen(record);
+      const dest = shellQuote(remotePath(to.path));
+      const result = await upload(box, record.name, tree, dest, basename(local), signal);
+
+      out.success({ sandbox: record.name, ...result }, "");
+
+      return 0;
+    }
+
     const bytes = new Uint8Array(await readFile(local));
     const { record } = await findTarget(session, to.target);
     const box = await session.reopen(record);
     await box.writeFile(to.path, bytes, {
-      overwrite: !flags.bool("no-clobber"),
+      overwrite: !noClobber,
       signal: session.ctx.signal,
     });
     session.ctx.out.success({ sandbox: record.name, path: to.path, bytes: bytes.byteLength }, "");
+
+    return 0;
+  }
+
+  if (recursive) {
+    const path = remotePath(from!.path);
+    let local = resolve(session.ctx.cwd, destination);
+
+    if ((await stat(local).catch(() => null))?.isDirectory())
+      local = join(local, posix.basename(path));
+    const { record } = await findTarget(session, from!.target);
+    const box = await session.reopen(record);
+    const result = await download(box, record.name, path, local, excludes, noClobber, signal);
+
+    if (result.skipped.length)
+      out.note(
+        `sandbar: skipped ${result.skipped.length} special file(s) such as devices or fifos`,
+      );
+    out.success(
+      {
+        sandbox: record.name,
+        path: result.path,
+        files: result.files,
+        directories: result.directories,
+        symlinks: result.symlinks,
+        bytes: result.bytes,
+      },
+      "",
+    );
 
     return 0;
   }
@@ -1432,6 +1513,43 @@ export async function cpCommand(session: Session, flags: Flags): Promise<number>
   }
 
   session.ctx.out.success({ sandbox: record.name, path: local, bytes: bytes.byteLength }, "");
+
+  return 0;
+}
+
+/** The local tree for `push` and `run --push`, read before anything is created. */
+async function pushTree(session: Session, flags: Flags, path: string): Promise<LocalTree> {
+  const local = resolve(session.ctx.cwd, path);
+
+  if (!(await stat(local)).isDirectory()) throw usage(`${path} is not a directory`);
+
+  return localTree(
+    local,
+    new Excludes(flags.strings("exclude")),
+    !flags.bool("include-ignored"),
+    (text) => session.ctx.out.note(text),
+  );
+}
+
+export async function pushCommand(session: Session, flags: Flags): Promise<number> {
+  if (flags.positionals.length < 1 || flags.positionals.length > 2)
+    throw usage("Usage: sandbar push <sandbox>[:/dir] [path]");
+  const [target, path = "."] = [flags.positionals[0]!, flags.positionals[1]];
+  const location = remote(target);
+  const tree = await pushTree(session, flags, path);
+  const { record } = await findTarget(session, location?.target ?? target);
+  const box = await session.reopen(record);
+
+  const result = await upload(
+    box,
+    record.name,
+    tree,
+    location ? shellQuote(remotePath(location.path)) : defaultPushDir,
+    null,
+    session.ctx.signal,
+  );
+
+  session.ctx.out.success({ sandbox: record.name, ...result }, result.path);
 
   return 0;
 }

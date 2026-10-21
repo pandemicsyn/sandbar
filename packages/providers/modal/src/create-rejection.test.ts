@@ -38,6 +38,12 @@ function fixture(failure: Error) {
     async result() {
       throw new Error("no execution evidence");
     },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
+    },
     close() {},
   };
 
