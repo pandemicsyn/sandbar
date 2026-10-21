@@ -43,6 +43,12 @@ test("Modal passes create env to the single native create and saves no value", a
     async result() {
       throw new Error("no execution evidence");
     },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
+    },
     close() {},
   };
 
