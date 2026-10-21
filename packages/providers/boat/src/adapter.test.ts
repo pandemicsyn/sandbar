@@ -36,7 +36,11 @@ test("Boat conformance: one native attempt, distinct accounts, lost and late res
         image: { kind: "prepared", value: "ubuntu-24.04" },
         networkPolicy: "internet",
       },
-      counters: () => ({ ...fixture.effects }),
+      counters: () => ({
+        create: fixture.effects.create,
+        destroy: fixture.effects.destroy,
+        release: fixture.effects.release,
+      }),
       expectedReleasesPerConnection: 0,
       loseNextCreateResponse: fixture.loseNextCreateResponse,
       holdNextCreateResponse: fixture.holdNextCreateResponse,

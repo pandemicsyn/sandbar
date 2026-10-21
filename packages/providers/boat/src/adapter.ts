@@ -2,8 +2,10 @@ import type {
   BoatApi,
   CreateSandboxRequest,
   FetchAPI,
+  NamedSnapshot,
   Sandbox as NativeSandbox,
 } from "@boatdev/sdk";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   AdapterCheckpointError,
@@ -11,11 +13,18 @@ import {
   assertResourceScope,
   DEFAULT_LIFETIME_SECONDS,
   defineAdapter,
+  Preserve,
+  PreserveSchema,
+  resolveSnapshot,
   ResourceMinimums,
   sandboxReference,
   smallestSize,
   unknownSandboxFacts,
   type Fact,
+  type ObserveContext,
+  type ResourceReference,
+  type SnapshotInfo,
+  type SnapshotProfile,
   type SandboxResources,
   type AdapterSession,
   type AttemptContext,
@@ -23,6 +32,7 @@ import {
   type ExecInput,
   type FileWriteInput,
   type ReadContext,
+  type RecoveryAttempt,
   type Sandbox,
   type SandboxInfo,
   type SandboxReference,
@@ -78,6 +88,8 @@ const Configuration = z
      * sandboxes start with none of the account's secrets (`noEnv`).
      */
     environment: z.string().min(1).max(128).optional(),
+    /** Boat named snapshots keep the disk only; only `Preserve.FILESYSTEM` is accepted. */
+    snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
     lifecycle: z
       .strictObject({
         /** Auto-archive after this many seconds; renew extends it. */
@@ -87,6 +99,8 @@ const Configuration = z
           .min(60)
           .max(MAX_TTL_SECONDS)
           .default(DEFAULT_LIFETIME_SECONDS),
+        /** Boat archives keep the disk only; only `Preserve.FILESYSTEM` is accepted. */
+        suspension: z.strictObject({ preserve: PreserveSchema }).optional(),
       })
       .default({ lifetimeSeconds: DEFAULT_LIFETIME_SECONDS }),
   })
@@ -139,6 +153,58 @@ const DestroyToken = z.strictObject({ id: Id, operation: Id.optional() });
 
 const StopToken = z.strictObject({ id: Id });
 
+/** The frozen artifact behind a name; a reference pins it as its generation. */
+const Artifact = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_.:-]+$/);
+
+/** The deterministic per-attempt name is checkpointed before the save so a lost response can be found. */
+const CaptureToken = z.strictObject({
+  name: z.string().regex(/^sandbar-snapshot-[0-9a-f]{24}$/),
+  source: Id,
+  sourceState: z.enum(["running", "suspended"]),
+});
+
+const SnapshotDeleteToken = z.strictObject({ name: z.string().regex(SnapshotName) });
+
+/**
+ * Saving an existing Boat name replaces its artifact, so every capture gets its own name;
+ * the reference also pins the captured artifact as its generation.
+ */
+function snapshotName(submission: string): string {
+  return `sandbar-snapshot-${createHash("sha256").update(submission).digest("hex").slice(0, 24)}`;
+}
+
+/** Boat freezes the sandbox's disk; restores boot a fresh machine from it. */
+const profile: SnapshotProfile = {
+  id: "boat-named",
+  preserve: Preserve.FILESYSTEM,
+  // An archived sandbox saves the disk its stop captured; a running one takes a fresh capture.
+  sourceStates: ["running", "suspended"],
+  // Boat does not document whether a fresh capture pauses the sandbox; claim no less.
+  interruption: "pause",
+  sourceAfter: "unchanged",
+  connections: "unknown",
+  consistency: "unknown",
+  restoreExecution: "fresh",
+  mountHandling: "none",
+};
+
+const snapshotSupport = {
+  status: "supported" as const,
+  value: { profiles: [profile], defaultProfileId: profile.id },
+};
+
+/** A restore is an ordinary create `from` the name; it keeps the captured machine type. */
+const restoreSupport = {
+  networkPolicies: ["internet"],
+  resources: false,
+  mounts: false,
+  independentLifecycle: true,
+};
+
 type Native = Pick<
   BoatApi,
   | "me"
@@ -154,6 +220,10 @@ type Native = Pick<
   | "stop"
   | "resume"
   | "update"
+  | "saveNamedSnapshot"
+  | "getNamedSnapshot"
+  | "listNamedSnapshots"
+  | "deleteNamedSnapshot"
 >;
 
 const running = new Set(["ready", "idle", "running"]);
@@ -237,6 +307,19 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
     config: Configuration,
     credentials: Credentials,
     async connect({ config, credentials, host }) {
+      // Exact depth choices Boat cannot honor reject before any provider IO.
+      if (config.snapshots?.preserve === Preserve.FILESYSTEM_AND_MEMORY)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Boat named snapshots keep the disk only; memory snapshots are not supported",
+        );
+
+      if (config.lifecycle.suspension?.preserve === Preserve.FILESYSTEM_AND_MEMORY)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Boat archives keep the disk only; memory suspension is not supported",
+        );
+
       // Unmet minimums reject before any provider IO.
       const machine = config.resources
         ? smallestSize("Boat", MACHINES, config.resources).type
@@ -409,6 +492,283 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
           : ctx.unknown(`${reason}; do not replay`);
       };
 
+      const partialRestore = (
+        id: string,
+        identity: { operationId: string; submissionId: string },
+      ) => ({
+        kind: "snapshot_restore" as const,
+        status: "unknown" as const,
+        sandbox: sandboxReference("boat", scope, id, {
+          operation: identity.operationId,
+          submission: identity.submissionId,
+        }),
+        mounts: [],
+      });
+
+      /** Create from the stock machine or a name, or restore a snapshot; then wait for readiness. */
+      const launch = async (
+        source: { image: string } | { snapshot: string },
+        ctx: AttemptContext<z.infer<typeof CreateToken>>,
+        lifetimeSeconds = config.lifecycle.lifetimeSeconds,
+      ) => {
+        const partial = "snapshot" in source ? partialRestore : partialCreate;
+        let id: string;
+
+        try {
+          const request: CreateSandboxRequest = { ttlSeconds: lifetimeSeconds };
+
+          // A restore omits the type so Boat keeps the one the snapshot was saved from.
+          if ("image" in source) {
+            request.type = machine;
+
+            if (source.image !== BASE_IMAGE) request.from = source.image;
+          } else request.from = source.snapshot;
+
+          // Without a configured environment, withhold every account secret.
+          if (config.environment === undefined) request.noEnv = true;
+          else request.environment = config.environment;
+
+          const response = await native.create(
+            { idempotencyKey: ctx.submissionId, createSandboxRequest: request },
+            init(readContext(ctx.signal)),
+          );
+
+          id = Id.parse(response.sandbox.id);
+        } catch (error) {
+          if (error instanceof z.ZodError)
+            return ctx.unknown("Boat create acknowledgement has no usable sandbox id");
+
+          return rejection(ctx, error, "Boat create response was not confirmed");
+        }
+
+        try {
+          await ctx.checkpoint({ id });
+        } catch (error) {
+          if (error instanceof AdapterCheckpointError) error.outcome = partial(id, ctx);
+          throw error;
+        }
+
+        const creation = { operation: ctx.operationId, submission: ctx.submissionId };
+
+        try {
+          const result = await settle(ctx.signal, async (read) => {
+            const current = await created(id, creation, read);
+
+            if (current.value) return current;
+
+            if (!current.sandbox || ["cancelled", "error"].includes(current.sandbox.state))
+              return current;
+
+            return undefined;
+          });
+
+          if (result?.value) return result.value;
+
+          if (result?.sandbox?.state === "cancelled" || (result && !result.sandbox))
+            return ctx.unknown(
+              "Boat cancelled the sandbox before it became ready; nothing remains to clean up",
+              partial(id, ctx),
+            );
+
+          if (result?.sandbox?.state === "error")
+            return ctx.unknown(
+              "Boat reported an error while provisioning; inspect or destroy the sandbox",
+              partial(id, ctx),
+            );
+        } catch {
+          /* A failed readiness read is not evidence; continue through observation. */
+        }
+
+        return ctx.pending({ id }, { pollAfterMs: pollMs });
+      };
+
+      const observeLaunch = async (
+        attempt: RecoveryAttempt,
+        ctx: ObserveContext<z.infer<typeof CreateToken>>,
+        partial: typeof partialCreate | typeof partialRestore,
+      ) => {
+        const token = CreateToken.safeParse(attempt.token);
+
+        if (!token.success)
+          return ctx.unknown(
+            "Boat create response was lost before a sandbox id arrived; inspect inventory without replay",
+          );
+
+        const current = await created(
+          token.data.id,
+          { operation: attempt.operationId, submission: attempt.submissionId },
+          ctx,
+        );
+
+        if (current.value) return current.value;
+
+        if (!current.sandbox || ["cancelled", "error"].includes(current.sandbox.state))
+          return ctx.unknown(
+            `Boat sandbox ${current.sandbox ? current.sandbox.state : "is gone"}; inspect without replay`,
+            partial(token.data.id, attempt),
+          );
+
+        return ctx.pending(token.data, { pollAfterMs: pollMs });
+      };
+
+      const snapshotRef = (
+        name: string,
+        artifact: string | undefined,
+        ownership: ResourceReference["ownership"] = "unknown",
+      ): ResourceReference<"snapshot"> => {
+        const ref: ResourceReference<"snapshot"> = {
+          version: 1,
+          kind: "snapshot",
+          provider: "boat",
+          scope,
+          nativeId: name,
+          ownership,
+        };
+
+        if (artifact !== undefined) ref.generation = Artifact.parse(artifact);
+
+        return ref;
+      };
+
+      /** The artifact a reference pins; restore requires one. */
+      const checkedSnapshot = (ref: ResourceReference, pinned = true) => {
+        assertResourceScope(ref, { provider: "boat", scope });
+
+        if (
+          ref.kind !== "snapshot" ||
+          !SnapshotName.test(ref.nativeId) ||
+          (ref.generation === undefined ? pinned : !Artifact.safeParse(ref.generation).success)
+        )
+          throw new AdapterError("CONFLICT", "Invalid Boat snapshot identity");
+
+        return ref.generation;
+      };
+
+      /** A named snapshot, or null once Boat no longer has the name. */
+      const findSnapshot = async (
+        name: string,
+        ctx: ReadContext,
+      ): Promise<NamedSnapshot | null> => {
+        let snapshot: NamedSnapshot;
+
+        try {
+          snapshot = (await native.getNamedSnapshot({ name }, init(ctx))).snapshot;
+        } catch (error) {
+          const native = await failure(error);
+
+          if (native.status === 404) return null;
+          throw native.error;
+        }
+
+        if (snapshot.name !== name)
+          throw new AdapterError("CONFLICT", "Boat returned a different snapshot name");
+
+        return snapshot;
+      };
+
+      /** The name must still hold the referenced artifact; saving it again replaces it. */
+      const pinnedSnapshot = async (ref: ResourceReference, ctx: ReadContext) => {
+        const artifact = checkedSnapshot(ref);
+        const snapshot = await findSnapshot(ref.nativeId, ctx);
+
+        if (!snapshot) throw new AdapterError("NOT_FOUND", "Boat snapshot is unavailable");
+
+        if (snapshot.status !== "ready" || snapshot.snapshotId !== artifact)
+          throw new AdapterError(
+            "CONFLICT",
+            snapshot.status === "ready"
+              ? "Boat snapshot was saved again; the referenced capture no longer exists"
+              : `Boat snapshot is ${snapshot.status}`,
+          );
+
+        return snapshot;
+      };
+
+      const snapshotInfo = (snapshot: NamedSnapshot, ref: ResourceReference): SnapshotInfo => ({
+        reference: ref,
+        preserve: Preserve.FILESYSTEM,
+        restoreExecution: "fresh",
+        consistency: "unknown",
+        source: Id.safeParse(snapshot.sourceSandboxId).success
+          ? { id: snapshot.sourceSandboxId, class: "boat-sandbox" }
+          : null,
+        state:
+          snapshot.status === "ready"
+            ? "ready"
+            : snapshot.status === "saving"
+              ? "creating"
+              : "unknown",
+        createdAt: Number.isNaN(snapshot.createdAt.getTime())
+          ? null
+          : snapshot.createdAt.toISOString(),
+        expiration: "unknown",
+        excludedPaths: null,
+        mounts: [],
+        mountHandling: "none",
+        restore: restoreSupport,
+        dependencies: [],
+        nativeDependencies: null,
+      });
+
+      const listedRef = (snapshot: NamedSnapshot) =>
+        snapshotRef(
+          snapshot.name,
+          snapshot.status === "ready" && Artifact.safeParse(snapshot.snapshotId).success
+            ? snapshot.snapshotId
+            : undefined,
+        );
+
+      const captureOutcome = (token: z.infer<typeof CaptureToken>, artifact?: string) => ({
+        kind: "snapshot_capture" as const,
+        status: "unknown" as const,
+        snapshot: artifact === undefined ? undefined : snapshotRef(token.name, artifact),
+      });
+
+      /** Capture finishes when the attempt's name reports a ready artifact from its source. */
+      const captureResult = (
+        token: z.infer<typeof CaptureToken>,
+        snapshot: NamedSnapshot | null,
+        settle: Pick<ObserveContext<z.infer<typeof CaptureToken>>, "pending" | "unknown">,
+      ) => {
+        if (!snapshot)
+          return settle.unknown(
+            "Boat snapshot response was lost and no snapshot carries this attempt; list snapshots without replay",
+            captureOutcome(token),
+          );
+
+        if (snapshot.sourceSandboxId !== token.source)
+          return settle.unknown(
+            "Boat snapshot source differs from the attempt; inspect without replay",
+            captureOutcome(token),
+          );
+
+        if (snapshot.status === "failed")
+          return settle.unknown(
+            "Boat snapshot save failed; delete the name if it remains",
+            captureOutcome(token),
+          );
+
+        if (snapshot.status !== "ready") return settle.pending(token, { pollAfterMs: pollMs });
+
+        if (!Artifact.safeParse(snapshot.snapshotId).success)
+          return settle.unknown(
+            "Boat reported a ready snapshot without a usable artifact id; inspect without replay",
+            captureOutcome(token),
+          );
+        const ref = snapshotRef(token.name, snapshot.snapshotId, "verified-created");
+
+        return {
+          snapshot: snapshotInfo(snapshot, ref),
+          capture: {
+            preserve: profile.preserve,
+            interruption: profile.interruption,
+            restoreExecution: profile.restoreExecution,
+          },
+          source: { state: token.sourceState, connections: profile.connections },
+          retainedResources: [ref],
+        };
+      };
+
       const session: AdapterSession<
         CreateInput,
         Sandbox,
@@ -461,98 +821,13 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
 
             return input;
           },
-          async submit(input, ctx) {
-            let id: string;
-
-            try {
-              const request: CreateSandboxRequest = {
-                type: machine,
-                ttlSeconds: input.lifetimeSeconds ?? config.lifecycle.lifetimeSeconds,
-              };
-
-              if (input.image.value !== BASE_IMAGE) request.from = input.image.value;
-
-              // Without a configured environment, withhold every account secret.
-              if (config.environment === undefined) request.noEnv = true;
-              else request.environment = config.environment;
-
-              const response = await native.create(
-                { idempotencyKey: ctx.submissionId, createSandboxRequest: request },
-                init(readContext(ctx.signal)),
-              );
-
-              id = Id.parse(response.sandbox.id);
-            } catch (error) {
-              if (error instanceof z.ZodError)
-                return ctx.unknown("Boat create acknowledgement has no usable sandbox id");
-
-              return rejection(ctx, error, "Boat create response was not confirmed");
-            }
-
-            try {
-              await ctx.checkpoint({ id });
-            } catch (error) {
-              if (error instanceof AdapterCheckpointError) error.outcome = partialCreate(id, ctx);
-              throw error;
-            }
-
-            const creation = { operation: ctx.operationId, submission: ctx.submissionId };
-
-            try {
-              const result = await settle(ctx.signal, async (read) => {
-                const current = await created(id, creation, read);
-
-                if (current.value) return current;
-
-                if (!current.sandbox || ["cancelled", "error"].includes(current.sandbox.state))
-                  return current;
-
-                return undefined;
-              });
-
-              if (result?.value) return result.value;
-
-              if (result?.sandbox?.state === "cancelled" || (result && !result.sandbox))
-                return ctx.unknown(
-                  "Boat cancelled the sandbox before it became ready; nothing remains to clean up",
-                  partialCreate(id, ctx),
-                );
-
-              if (result?.sandbox?.state === "error")
-                return ctx.unknown(
-                  "Boat reported an error while provisioning; inspect or destroy the sandbox",
-                  partialCreate(id, ctx),
-                );
-            } catch {
-              /* A failed readiness read is not evidence; continue through observation. */
-            }
-
-            return ctx.pending({ id }, { pollAfterMs: pollMs });
-          },
-          async observe(attempt, ctx) {
-            const token = CreateToken.safeParse(attempt.token);
-
-            if (!token.success)
-              return ctx.unknown(
-                "Boat create response was lost before a sandbox id arrived; inspect inventory without replay",
-              );
-
-            const current = await created(
-              token.data.id,
-              { operation: attempt.operationId, submission: attempt.submissionId },
+          submit: (input, ctx) =>
+            launch(
+              { image: input.image.value },
               ctx,
-            );
-
-            if (current.value) return current.value;
-
-            if (!current.sandbox || ["cancelled", "error"].includes(current.sandbox.state))
-              return ctx.unknown(
-                `Boat sandbox ${current.sandbox ? current.sandbox.state : "is gone"}; inspect without replay`,
-                partialCreate(token.data.id, attempt),
-              );
-
-            return ctx.pending(token.data, { pollAfterMs: pollMs });
-          },
+              input.lifetimeSeconds ?? config.lifecycle.lifetimeSeconds,
+            ),
+          observe: (attempt, ctx) => observeLaunch(attempt, ctx, partialCreate),
         },
         async inspect(box, ctx) {
           if (box.reference) checkedRef(box.reference);
@@ -1044,6 +1319,211 @@ export function createBoatAdapter(options: BoatAdapterOptions = {}) {
                   ? observation(sandbox, input.sandbox.reference)
                   : null,
             };
+          },
+        },
+        snapshotProfiles: async () => snapshotSupport,
+        async resourceCapabilities() {
+          return {
+            restore: { status: "supported", value: restoreSupport },
+            volumes: { status: "unsupported", reason: "Boat has no volumes" },
+            mounts: { status: "unsupported", reason: "Boat has no volume mounts" },
+          };
+        },
+        snapshotCapture: {
+          recovery: { version: 1, token: CaptureToken },
+          async prepare(input, ctx) {
+            const sandbox = await requireSandbox(input.sandbox, ctx);
+            const plan = resolveSnapshot(snapshotSupport, input.request, state(sandbox.state));
+
+            if (plan.status !== "supported") throw new AdapterError("UNSUPPORTED", plan.reason);
+
+            if (sandbox.snapshots === false)
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "This Boat sandbox has snapshots off; it has no disk capture to save",
+              );
+
+            if (input.request.retention?.cleanupAfterSeconds !== undefined)
+              throw new AdapterError("UNSUPPORTED", "Boat has no scheduled snapshot deletion");
+
+            return {
+              ...input,
+              expectation: { profile: plan.value.profile, sourceState: plan.value.sourceState },
+            };
+          },
+          async submit(input, ctx) {
+            const token: z.infer<typeof CaptureToken> = {
+              name: snapshotName(ctx.submissionId),
+              source: Id.parse(input.sandbox.id),
+              sourceState: input.expectation?.sourceState === "suspended" ? "suspended" : "running",
+            };
+
+            await ctx.checkpoint(token);
+            let saved: NamedSnapshot;
+
+            try {
+              saved = (
+                await native.saveNamedSnapshot(
+                  { namedSnapshotSaveRequest: { sandboxId: token.source, name: token.name } },
+                  init(readContext(ctx.signal)),
+                )
+              ).snapshot;
+            } catch (error) {
+              const native = await failure(error);
+
+              // A lost save is found again by its attempt name; it is never resent.
+              return refusedBeforeEffect(native)
+                ? ctx.reject(native.error.code, native.error.message)
+                : ctx.pending(token, { pollAfterMs: pollMs });
+            }
+
+            if (saved.name !== token.name || saved.sourceSandboxId !== token.source)
+              return ctx.unknown(
+                "Boat snapshot acknowledgement differs from the attempt; do not replay",
+                captureOutcome(token),
+              );
+
+            try {
+              const settled = await settle(ctx.signal, async (read) => {
+                const snapshot = await findSnapshot(token.name, read);
+
+                return snapshot?.status === "saving" ? undefined : { snapshot };
+              });
+
+              if (settled) return captureResult(token, settled.snapshot, ctx);
+            } catch {
+              /* The save is acknowledged; completion continues through observation. */
+            }
+
+            return ctx.pending(token, { pollAfterMs: pollMs });
+          },
+          async observe(attempt, ctx) {
+            const token = CaptureToken.safeParse(attempt.token);
+
+            if (!token.success || token.data.source !== attempt.sandbox?.id)
+              return ctx.unknown("Boat capture identity is unavailable; do not replay");
+
+            return captureResult(token.data, await findSnapshot(token.data.name, ctx), ctx);
+          },
+        },
+        snapshotRestore: {
+          recovery: { version: 1, token: CreateToken },
+          async prepare(input, ctx) {
+            if (input.request.resources || input.request.mounts?.length)
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "Boat restores keep the captured machine type and take no mounts",
+              );
+
+            if (!restoreSupport.networkPolicies.includes(input.request.networkPolicy))
+              throw new AdapterError(
+                "UNSUPPORTED",
+                "Boat sandboxes always have outbound internet; restores require internet policy",
+              );
+            await pinnedSnapshot(input.snapshot, ctx);
+
+            return input;
+          },
+          // Boat restores by name; prepare checked the name still holds the pinned capture.
+          submit: (input, ctx) => launch({ snapshot: input.snapshot.nativeId }, ctx),
+          async observe(attempt, ctx) {
+            if (!attempt.resource)
+              return ctx.unknown("Boat restore snapshot identity is unavailable; do not replay");
+            checkedSnapshot(attempt.resource);
+
+            return observeLaunch(attempt, ctx, partialRestore);
+          },
+        },
+        async snapshotInspect(ref, ctx) {
+          const artifact = checkedSnapshot(ref, false);
+          const snapshot = await findSnapshot(ref.nativeId, ctx);
+
+          if (!snapshot) throw new AdapterError("NOT_FOUND", "Boat snapshot is unavailable");
+
+          if (artifact !== undefined && snapshot.snapshotId !== artifact)
+            throw new AdapterError(
+              "CONFLICT",
+              "Boat snapshot was saved again; the referenced capture no longer exists",
+            );
+
+          return snapshotInfo(snapshot, ref);
+        },
+        snapshotListCoverage: "provider-scope",
+        async snapshotList(input, ctx) {
+          const cursor = input.cursor === undefined ? 0 : Number(input.cursor);
+
+          if (!Number.isSafeInteger(cursor) || cursor < 0)
+            throw new AdapterError("INVALID_ARGUMENT", "Invalid Boat snapshot cursor");
+
+          // Boat returns every named snapshot of the account in one response.
+          const all = (await read(ctx, (request) => native.listNamedSnapshots(request))).snapshots
+            .filter((snapshot) => SnapshotName.test(snapshot.name))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          return {
+            // Listed snapshots carry no Sandbar creation evidence.
+            items: all
+              .slice(cursor, cursor + input.limit)
+              .map((snapshot) => snapshotInfo(snapshot, listedRef(snapshot))),
+            nextCursor:
+              cursor + input.limit < all.length ? String(cursor + input.limit) : undefined,
+            coverage: "provider-scope" as const,
+          };
+        },
+        snapshotDelete: {
+          recovery: { version: 1, token: SnapshotDeleteToken },
+          async prepare(ref, ctx) {
+            const artifact = checkedSnapshot(ref, false);
+            const snapshot = await findSnapshot(ref.nativeId, ctx);
+
+            if (!snapshot) throw new AdapterError("NOT_FOUND", "Boat snapshot is unavailable");
+
+            if (snapshot.status === "saving")
+              throw new AdapterError("CONFLICT", "Boat snapshot is still saving");
+
+            // Deleting by name must not remove a capture saved under it since.
+            if ((snapshot.status === "ready" ? snapshot.snapshotId : undefined) !== artifact)
+              throw new AdapterError(
+                "CONFLICT",
+                "Boat snapshot was saved again; the referenced capture no longer exists",
+              );
+
+            return ref;
+          },
+          async submit(ref, ctx) {
+            const token = { name: ref.nativeId };
+            await ctx.checkpoint(token);
+
+            try {
+              const deleted = await native.deleteNamedSnapshot(
+                { name: token.name },
+                init(readContext(ctx.signal)),
+              );
+
+              if (deleted.status === "deleted" && deleted.name === token.name)
+                return { deleted: true as const, reference: ref };
+            } catch (error) {
+              const native = await failure(error);
+
+              if (refusedBeforeEffect(native))
+                return ctx.reject(native.error.code, native.error.message);
+            }
+
+            return ctx.pending(token, { pollAfterMs: pollMs });
+          },
+          async observe(attempt, ctx) {
+            const token = SnapshotDeleteToken.safeParse(attempt.token);
+            const ref = attempt.resource;
+
+            if (!token.success || !ref || token.data.name !== ref.nativeId)
+              return ctx.unknown("Boat snapshot deletion identity is unavailable; do not replay");
+            checkedSnapshot(ref, false);
+
+            return (await findSnapshot(token.data.name, ctx))
+              ? ctx.unknown(
+                  "Boat snapshot still exists; deletion was not confirmed, so delete it again explicitly",
+                )
+              : { deleted: true as const, reference: ref };
           },
         },
       };

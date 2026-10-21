@@ -1,6 +1,6 @@
 ---
 title: Boat
-description: Use the Boat adapter for full Ubuntu VMs with commands, files, archive/resume and renewal.
+description: Use the Boat adapter for full Ubuntu VMs with commands, files, archive/resume, snapshots and renewal.
 ---
 
 The `@sandbar-sdk/boat` package implements the public Sandbar adapter interface for [Boat](https://boat.dev). Install it with `npm install sandbar-sdk @sandbar-sdk/boat`; it is experimental. Use Node 20+ or Bun. Native SDK version: `@boatdev/sdk@1.9.9`, Boat Public API v1.
@@ -37,6 +37,7 @@ Create an API key in the Boat dashboard. `connect` verifies it with `GET /me` an
 | `resources`                 | `default` type | Minimum `{ vcpus, memoryMiB }`. Picks the smallest of `small` (2 vCPU, 4 GiB), `default` (4, 8 GiB), `large` (8, 16 GiB) or `xlarge` (16, 32 GiB; plan-dependent). Deprecated alias: `machine`.                               |
 | `environment`               | none           | Name of a Boat environment to attach. **Omitted, sandboxes start with `noEnv`: none of your account's variables, secret files or logins.** Name an environment only for code you trust with them.                             |
 | `lifecycle.lifetimeSeconds` | 900            | 60 seconds to 30 days. Boat archives (not deletes) the sandbox when it expires; `renew()` moves the deadline. The timer counts from create or resume, not from activity. `create({ lifecycle })` can override it per sandbox. |
+| `snapshots.preserve`        | filesystem     | Boat snapshots keep the disk only. `Preserve.FILESYSTEM` is accepted; `Preserve.FILESYSTEM_AND_MEMORY` is rejected at connect. `lifecycle.suspension.preserve` works the same way.                                            |
 
 Boat runs sandboxes in the EU (Germany, Finland, France) and does not let you pick a region, so `region` and `labels` are rejected. Mounts, snapshot requirements and image builds are unsupported.
 
@@ -44,15 +45,24 @@ Boat runs sandboxes in the EU (Germany, Finland, France) and does not let you pi
 
 Everything below is tested on every change, using the real Boat client against a simulated API. **No live Boat run has been made yet.**
 
-| Feature           | Support                                                                                                                                                 | Live tested |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| Compute lifecycle | Create with an `Idempotency-Key`, inspect, inventory, reference reopening, and destroy by permanent delete with confirmed teardown.                     | No          |
-| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to 600 seconds.                 | No          |
-| Streaming output  | Live stdout/stderr as UTF-8 text from detached commands, with no 600-second cap; stop with `terminate()`. No byte output.                               | No          |
-| Files             | Binary read and overwrite write up to 5 MiB, under `/home/user` or `/tmp`. No-clobber writes are unsupported.                                           | No          |
-| Suspend/resume    | `suspend()` archives the disk and stops the machine; `resume()` restores the disk onto a fresh machine. Memory, processes and connections are not kept. | No          |
-| Renewal           | `renew()` sets a new auto-stop window of 60 seconds to 30 days.                                                                                         | No          |
-| Unsupported       | Snapshots, volumes, previews, piped input, byte streaming, terminals, directory operations, blocked egress, regions and labels.                         | —           |
+| Feature           | Support                                                                                                                                                              | Live tested |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Compute lifecycle | Create with an `Idempotency-Key`, inspect, inventory, reference reopening, and destroy by permanent delete with confirmed teardown.                                  | No          |
+| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to 600 seconds.                              | No          |
+| Streaming output  | Live stdout/stderr as UTF-8 text from detached commands, with no 600-second cap; stop with `terminate()`. No byte output.                                            | No          |
+| Files             | Binary read and overwrite write up to 5 MiB, under `/home/user` or `/tmp`. No-clobber writes are unsupported.                                                        | No          |
+| Suspend/resume    | `suspend()` archives the disk and stops the machine; `resume()` restores the disk onto a fresh machine. Memory, processes and connections are not kept.              | No          |
+| Renewal           | `renew()` sets a new auto-stop window of 60 seconds to 30 days.                                                                                                      | No          |
+| Snapshots         | Capture the disk of a running or archived sandbox as a named snapshot; inspect, list, restore onto a fresh machine and delete. See below.                            | No          |
+| Unsupported       | Fork, snapshot sharing, restore size overrides, volumes, previews, piped input, byte streaming, terminals, directory operations, blocked egress, regions and labels. | —           |
+
+## Snapshots
+
+`box.snapshot()` saves the sandbox's disk as a Boat [named snapshot](https://docs.boat.dev/api/v1) and waits for it to be ready. A running sandbox takes a fresh capture first, which can take minutes; an archived one saves the disk its stop already captured and stays archived. Memory, processes and connections are not kept: `snapshot.restore()` creates a new sandbox from the snapshot on a fresh machine of the type it was saved from, with the same `environment` or `noEnv` setting as any other create.
+
+Each capture gets its own name (`sandbar-snapshot-…`), because saving an existing Boat name replaces what it holds. The reference also records the frozen capture behind the name, so if the name is saved again outside Sandbar, `inspect()`, `restore()` and `delete()` on the old reference reject with `CONFLICT` instead of using the new contents.
+
+`client.snapshots.list()` returns every named snapshot in the account, including ones you saved with the Boat CLI or dashboard. Named snapshots are kept until you delete them and count toward your Boat plan's snapshot allowance; destroying the source sandbox does not remove them.
 
 ## How streamed commands work
 
