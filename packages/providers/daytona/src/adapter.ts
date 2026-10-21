@@ -16,6 +16,7 @@ import {
   nativeDeadline,
   PreserveSchema,
   ResourceMinimums,
+  DEFAULT_LIFETIME_SECONDS,
   type SandboxInfo,
   type SandboxReference,
 } from "@sandbar-sdk/adapter";
@@ -71,6 +72,7 @@ const Configuration = z
         preserve: PreserveSchema.optional(),
       })
       .default({ restartAfterCapture: true }),
+    /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
     ttlMinutes: z.coerce.number().int().min(1).safe().optional(),
     /**
      * Minimum size. Daytona fixes a size when it builds a snapshot, so OCI images are built with
@@ -95,7 +97,7 @@ const Configuration = z
       ctx.addIssue({
         code: "custom",
         path: ["lifecycle", "lifetimeSeconds"],
-        message: "Supply one lifetime option",
+        message: "Supply lifecycle.lifetimeSeconds or the deprecated ttlMinutes, not both",
       });
 
     if (value.network !== undefined && value.networkPolicy !== undefined)
@@ -110,11 +112,16 @@ const Configuration = z
     networkPolicy: network ?? value.networkPolicy ?? "daytona-default",
     ttlMinutes:
       value.lifecycle?.lifetimeSeconds === undefined
-        ? (value.ttlMinutes ?? 15)
-        : Math.ceil(value.lifecycle.lifetimeSeconds / 60),
+        ? (value.ttlMinutes ?? DEFAULT_LIFETIME_SECONDS / 60)
+        : nativeMinutes(value.lifecycle.lifetimeSeconds),
     autoStopMinutes:
       value.lifecycle?.idleSeconds === undefined ? 0 : Math.ceil(value.lifecycle.idleSeconds / 60),
   }));
+
+/** Daytona keeps lifetimes in whole minutes, so seconds round up. */
+function nativeMinutes(seconds: number): number {
+  return Math.ceil(seconds / 60);
+}
 
 const CompactObservation = SandboxInfoSchema.omit({ reference: true });
 
@@ -1063,6 +1070,8 @@ export function createDaytonaAdapter(
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
           fileWrite: { overwrite: true, noClobber: true },
           createEnv: true,
+          // Rounded up to whole minutes; inspect reports the native expiry.
+          lifetime: { minSeconds: 1, maxSeconds: Number.MAX_SAFE_INTEGER },
         },
         imageBuild: {
           recovery: { version: 1, token: ImageToken },
@@ -1185,6 +1194,10 @@ export function createDaytonaAdapter(
               labels: input.labels,
               mounts: input.mounts,
               env: input.env,
+              ttlMinutes:
+                input.lifetimeSeconds === undefined
+                  ? undefined
+                  : nativeMinutes(input.lifetimeSeconds),
             };
           },
           async submit(input, ctx) {
@@ -1197,6 +1210,7 @@ export function createDaytonaAdapter(
               labels: input.labels,
               mounts: input.mounts,
               env: input.env,
+              ttlMinutes: input.ttlMinutes,
               signal: ctx.signal,
             });
 

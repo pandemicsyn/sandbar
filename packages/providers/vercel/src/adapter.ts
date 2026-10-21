@@ -21,6 +21,7 @@ import {
   assertResourceIdentity,
   sandboxReference,
   smallestSize,
+  defaultLifetime,
   ResourceMinimums,
   unknownSandboxFacts,
   type Fact,
@@ -72,6 +73,11 @@ const SIZES = [1, ...Array.from({ length: 16 }, (_, index) => (index + 1) * 2)].
 /** Vercel's longest plan limit (Pro and Enterprise, 24 hours); Vercel enforces lower plan limits itself. */
 const MAX_SESSION_SECONDS = 86_400;
 
+/** Vercel's shortest session timeout is one minute; shorter lifetimes round up to it. */
+function sessionLifetime(seconds: number): number {
+  return Math.max(60, seconds);
+}
+
 export const vercelConfig = z.strictObject({
   teamId: id,
   projectId: id,
@@ -115,7 +121,14 @@ export const vercelConfig = z.strictObject({
       "vercel/sandbox/universal:latest",
     ])
     .default("vercel/sandbox/universal:latest"),
-  timeoutSeconds: z.number().int().min(60).max(MAX_SESSION_SECONDS).default(900),
+  lifecycle: z
+    .strictObject({
+      /** Session lifetime; under a minute rounds up to Vercel's minimum of 60 seconds. */
+      lifetimeSeconds: z.number().int().positive().max(MAX_SESSION_SECONDS).optional(),
+    })
+    .optional(),
+  /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
+  timeoutSeconds: z.number().int().min(60).max(MAX_SESSION_SECONDS).optional(),
   persistent: z.boolean().default(false),
   snapshots: z
     .strictObject({
@@ -300,6 +313,23 @@ export function createVercelAdapter(
           "INVALID_ARGUMENT",
           "Supply resources or the deprecated vcpus, not both",
         );
+
+      if (config.lifecycle?.lifetimeSeconds !== undefined && config.timeoutSeconds !== undefined)
+        throw new AdapterError(
+          "INVALID_ARGUMENT",
+          "Supply lifecycle.lifetimeSeconds or the deprecated timeoutSeconds, not both",
+        );
+
+      const lifetimeSeconds = sessionLifetime(
+        config.lifecycle?.lifetimeSeconds ??
+          config.timeoutSeconds ??
+          defaultLifetime(MAX_SESSION_SECONDS),
+      );
+
+      // A persistent sandbox's resumed sessions are checked against the setup lifetime.
+      const createLifetime = config.persistent
+        ? undefined
+        : { minSeconds: 1, maxSeconds: MAX_SESSION_SECONDS };
 
       const networkPolicy = portablePolicy(config.network ?? config.networkPolicy ?? "blocked");
 
@@ -924,6 +954,11 @@ export function createVercelAdapter(
           async submit(input, ctx) {
             const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(30000)]);
 
+            const requestedLifetime =
+              input.lifetimeSeconds === undefined
+                ? lifetimeSeconds
+                : sessionLifetime(input.lifetimeSeconds);
+
             const requestedName = config.persistent
               ? creationName(ctx.submissionId)
               : `sandbar-${crypto.randomUUID()}`;
@@ -943,7 +978,7 @@ export function createVercelAdapter(
                 : undefined,
               region: config.region,
               persistent: config.persistent,
-              timeout: config.timeoutSeconds * 1000,
+              timeout: requestedLifetime * 1000,
               resources: { vcpus },
               ports: config.ports,
               failoverRegions: [],
@@ -1007,7 +1042,7 @@ export function createVercelAdapter(
               result.sandbox.currentSessionId === result.session.id &&
               result.session.region === config.region &&
               result.session.vcpus === vcpus &&
-              result.session.timeout === config.timeoutSeconds * 1000 &&
+              result.session.timeout === requestedLifetime * 1000 &&
               new RegExp(`^${image.split(":")[0]}@sha256:[a-f0-9]{64}$`).test(
                 result.sandbox.image ?? "",
               ) &&
@@ -1079,7 +1114,7 @@ export function createVercelAdapter(
                 value.sandbox.currentSessionId !== value.session.id ||
                 value.session.region !== config.region ||
                 value.session.vcpus !== vcpus ||
-                value.session.timeout !== config.timeoutSeconds * 1000 ||
+                value.session.timeout !== lifetimeSeconds * 1000 ||
                 value.session.networkPolicy?.mode !== mode ||
                 value.sandbox.networkPolicy?.mode !== mode ||
                 !new RegExp(`^${image.split(":")[0]}@sha256:[a-f0-9]{64}$`).test(
@@ -1349,6 +1384,7 @@ export function createVercelAdapter(
           exec: { commands: ["argv", "shell"], maxOutputBytes: maxBytes },
           fileWrite: { overwrite: true, noClobber: true },
           createEnv: true,
+          lifetime: createLifetime,
         },
         suspensionCapabilities: async () =>
           config.persistent
@@ -1542,7 +1578,7 @@ export function createVercelAdapter(
               result.resumed !== true ||
               result.session.id === before.session.id ||
               result.session.sourceSnapshotId !== snapshotId ||
-              result.session.timeout !== config.timeoutSeconds * 1000 ||
+              result.session.timeout !== lifetimeSeconds * 1000 ||
               result.session.status !== "running"
             )
               return ctx.unknown(
@@ -1606,7 +1642,7 @@ export function createVercelAdapter(
           },
           prepare: async (input) => {
             checkReference(input.sandbox);
-            const forSeconds = input.forSeconds ?? config.timeoutSeconds;
+            const forSeconds = input.forSeconds ?? lifetimeSeconds;
 
             if (forSeconds < 1 || forSeconds > MAX_SESSION_SECONDS || !Number.isInteger(forSeconds))
               throw new AdapterError(

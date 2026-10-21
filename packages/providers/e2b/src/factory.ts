@@ -15,11 +15,13 @@ export function e2b(options: {
   network?: "blocked" | "internet";
   /** @deprecated Use `network`. */
   networkPolicy?: "blocked" | "internet";
+  /** @deprecated Use `lifecycle: { lifetimeSeconds }`. */
   timeoutSeconds?: number;
   preview?: { access: "protected" | "public" };
   /** `Preserve.FILESYSTEM` captures disk only; the default also captures memory. */
   snapshots?: { preserve: Preserve };
   lifecycle?: {
+    /** Wall-clock lifetime (default 900, at most 86400); `create()` can override it per sandbox. */
     lifetimeSeconds?: number;
     /** `Preserve.FILESYSTEM` pauses disk only; the default also keeps memory. */
     suspension?: { preserve: Preserve };

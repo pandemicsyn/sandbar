@@ -445,6 +445,7 @@ export function createFakeAdapter(options: {
           exec: { commands: ["argv", "shell"], maxOutputBytes: caps.maxOutputBytes },
           fileWrite: { overwrite: true, noClobber: true },
           createEnv: true,
+          lifetime: { minSeconds: 1, maxSeconds: 86_400 },
         },
         create: {
           recovery: { version: 1, token: Token },
@@ -464,6 +465,7 @@ export function createFakeAdapter(options: {
               networkPolicy: input.networkPolicy,
               labels: input.labels,
               env: input.env,
+              lifetimeSeconds: input.lifetimeSeconds,
             };
           },
           async submit(input, ctx) {
@@ -475,6 +477,7 @@ export function createFakeAdapter(options: {
                 networkPolicy: input.networkPolicy,
                 labels: input.labels,
                 env: input.env,
+                lifetimeSeconds: input.lifetimeSeconds,
               }),
               ctx,
               bindingScope,

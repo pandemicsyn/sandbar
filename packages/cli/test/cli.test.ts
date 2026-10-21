@@ -66,7 +66,11 @@ async function control(path: string, body: Json) {
   expect(response.ok).toBe(true);
 }
 
-type FakeResource = { ref: { nativeId: string }; state: "running" | "destroyed" };
+type FakeResource = {
+  ref: { nativeId: string };
+  state: "running" | "destroyed";
+  lifetimeSeconds?: number;
+};
 
 async function fakeResources(): Promise<FakeResource[]> {
   const response = await fetch(new URL("/_test/state", server.url), {
@@ -191,6 +195,33 @@ describe("sandbar CLI against the fake provider", () => {
     ]);
     expect(await storeNames()).toEqual([]);
     expect(envelope(await cli(["ls", "--json"])).data.sandboxes).toEqual([]);
+  });
+
+  test("--ttl sets this sandbox's lifetime on create and run, and bad values fail before any effect", async () => {
+    await cli(["create", "--name", "short", "--prepared", "fake-starter", "--ttl", "30m"]);
+    await cli(["create", "--name", "plain", "--prepared", "fake-starter"]);
+    await seedExec(["true"], 0, "");
+    expect(
+      (await cli(["run", "--prepared", "fake-starter", "--ttl", "2h", "--", "true"])).code,
+    ).toBe(0);
+
+    expect((await fakeResources()).map((resource) => resource.lifetimeSeconds)).toEqual([
+      1800,
+      undefined,
+      7200,
+    ]);
+
+    for (const ttl of ["0", "soon", "1.5h"]) {
+      const bad = await cli(["create", "--prepared", "fake-starter", "--ttl", ttl, "--json"]);
+
+      expect(envelope(bad).error.message).toContain("--ttl must be a duration");
+    }
+
+    const over = await cli(["create", "--prepared", "fake-starter", "--ttl", "25h", "--json"]);
+
+    expect(envelope(over).error).toMatchObject({ code: "UNSUPPORTED", outcome: "rejected" });
+    expect(envelope(over).error.message).toContain("1-86400 seconds");
+    expect(await fakeResources()).toHaveLength(3);
   });
 
   test("a native id from the store also names the sandbox", async () => {

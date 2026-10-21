@@ -1030,6 +1030,11 @@ test("Modal setup supplies a working default image and a lifetime up to 24 hours
   for (const [config, image, timeoutMs] of [
     [{}, { ociReference: "python:3.12-slim", imageId: "" }, 900_000],
     [{ image: "im-custom", timeoutSeconds: 86_400 }, { imageId: "im-custom" }, 86_400_000],
+    [
+      { image: "im-custom", lifecycle: { lifetimeSeconds: 3600 } },
+      { imageId: "im-custom" },
+      3_600_000,
+    ],
   ] as const) {
     const client = await Sandbar.connect({
       adapter,
@@ -1040,12 +1045,19 @@ test("Modal setup supplies a working default image and a lifetime up to 24 hours
     try {
       await client.sandboxes.create();
       expect(requests.at(-1)).toMatchObject({ ...image, timeoutMs });
+      await client.sandboxes.create({ lifecycle: { lifetimeSeconds: 120 } });
+      expect(requests.at(-1)).toMatchObject({ ...image, timeoutMs: 120_000 });
     } finally {
       await client.close();
     }
   }
 
-  for (const config of [{ timeoutSeconds: 86_401 }, { image: "not-a-modal-image" }])
+  for (const config of [
+    { timeoutSeconds: 86_401 },
+    { lifecycle: { lifetimeSeconds: 86_401 } },
+    { timeoutSeconds: 600, lifecycle: { lifetimeSeconds: 600 } },
+    { image: "not-a-modal-image" },
+  ])
     await expect(
       Sandbar.connect({
         adapter,

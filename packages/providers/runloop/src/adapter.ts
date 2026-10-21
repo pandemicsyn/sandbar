@@ -4,6 +4,7 @@ import {
   AdapterError,
   assertResourceIdentity,
   assertResourceScope,
+  defaultLifetime,
   defineAdapter,
   Preserve,
   PreserveSchema,
@@ -108,7 +109,9 @@ const Configuration = z
   .transform(({ lifecycle: { idleSeconds, lifetimeSeconds }, ...value }) => ({
     ...value,
     lifecycle:
-      idleSeconds === undefined ? { lifetimeSeconds: lifetimeSeconds ?? 900 } : { idleSeconds },
+      idleSeconds === undefined
+        ? { lifetimeSeconds: lifetimeSeconds ?? defaultLifetime(MAX_LIFETIME_SECONDS) }
+        : { idleSeconds },
   }));
 
 type Configuration = z.output<typeof Configuration>;
@@ -133,9 +136,11 @@ function launchParameters(
   config: Configuration,
   size: Size | undefined,
   policy: string | null,
+  lifetimeOverride?: number,
 ): LaunchParameters {
   const launch: LaunchParameters = {};
-  const { idleSeconds, lifetimeSeconds } = config.lifecycle;
+  const { idleSeconds } = config.lifecycle;
+  const lifetimeSeconds = lifetimeOverride ?? config.lifecycle.lifetimeSeconds;
 
   if (size?.request === "CUSTOM_SIZE") {
     launch.resource_size_request = size.request;
@@ -754,7 +759,7 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
             [MARK.submission]: ctx.submissionId,
             [MARK.network]: input.networkPolicy,
           },
-          launch_parameters: launchParameters(config, size, policy),
+          launch_parameters: launchParameters(config, size, policy, input.lifetimeSeconds),
           tunnel: { auth_mode: config.preview.access === "public" ? "open" : "authenticated" },
         };
 
@@ -1672,6 +1677,10 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
         };
       },
     };
+
+    // An idle window replaces the lifetime natively, so a per-create lifetime needs none set.
+    if (config.lifecycle.idleSeconds === undefined)
+      result.supports.lifetime = { minSeconds: 60, maxSeconds: MAX_LIFETIME_SECONDS };
 
     async function finishCapture(
       token: z.infer<typeof CaptureToken>,

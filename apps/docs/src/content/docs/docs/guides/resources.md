@@ -134,9 +134,36 @@ Pass the returned `nextCursor` to read the next page; it is absent on the last p
 
 `operations.inventory()` remains available and returns only `id` and `state`.
 
+### Sandbox lifetime
+
+Every sandbox has a wall-clock lifetime, after which the provider removes it (Boat archives it instead). It is your backstop for a job that crashes or is cancelled before it can destroy its sandbox. Every adapter uses the same setting, `lifecycle.lifetimeSeconds` in adapter setup, and defaults to 900 seconds (15 minutes):
+
+```ts
+const client = await Sandbar.connect(
+  e2b({ apiKey: process.env.E2B_API_KEY!, lifecycle: { lifetimeSeconds: 1800 } }),
+);
+
+const box = await client.sandboxes.create(); // 30 minutes, from setup.
+const long = await client.sandboxes.create({ lifecycle: { lifetimeSeconds: 7200 } }); // This one only.
+```
+
+A per-create lifetime replaces the setup value for that sandbox. An adapter never shortens a lifetime: it may round up to its native step (whole minutes on Daytona, at least 60 seconds on E2B, Vercel and boxd), and `inspect()` reports the real expiry. A value it cannot apply rejects with `UNSUPPORTED` before anything is created. `capabilities().lifetime` reports the accepted range, or `null` when only setup can set it.
+
+| Adapter                                                  | Per-create range       | Notes                                           |
+| -------------------------------------------------------- | ---------------------- | ----------------------------------------------- |
+| [Daytona](/docs/providers/daytona/)                      | any, in whole minutes  | Rounded up.                                     |
+| [E2B](/docs/providers/e2b/)                              | up to 24 hours         | Under 60 seconds becomes 60. Plan limits apply. |
+| [boxd (experimental)](/docs/providers/boxd/)             | any                    | Under 60 seconds becomes 60.                    |
+| [Vercel Sandbox (experimental)](/docs/providers/vercel/) | up to 24 hours         | Not with `persistent: true`. Plan limits apply. |
+| Modal (experimental)                                     | up to 24 hours         |                                                 |
+| [Runloop (experimental)](/docs/providers/runloop/)       | 60 seconds to 48 hours | Not when `lifecycle.idleSeconds` is set.        |
+| [Boat (experimental)](/docs/providers/boat/)             | 60 seconds to 30 days  |                                                 |
+
+Older adapter-specific names still work for one minor release and reject when set together with `lifecycle.lifetimeSeconds`: E2B, Vercel and Modal `timeoutSeconds`, Daytona `ttlMinutes`, and boxd's top-level `lifetimeSeconds`. From the command line, `sandbar create --ttl 30m` and `sandbar run --ttl 2h` set a per-create lifetime.
+
 ### Renew lifetime
 
-Every adapter defaults to a 900-second (15-minute) initial lifetime. On E2B and Daytona, set `lifecycle: { lifetimeSeconds: 600 }` in adapter setup for the initial lifetime and the default `renew()` window. Supply this option instead of E2B's `timeoutSeconds` or Daytona's `ttlMinutes`, not alongside it.
+On adapters with renewal, the setup `lifecycle.lifetimeSeconds` is also the default `renew()` window.
 
 While the sandbox is running:
 
@@ -155,7 +182,7 @@ Renewal sets a new expiry window from when the provider processes the request. I
 
 Provider account limits can be tighter. `renewed.requested.forSeconds` reports the resolved setting. `acknowledged: true` means the provider accepted the request, even if the follow-up read failed and `observation` is `null`. If the acknowledgement is lost, recover the operation instead of automatically renewing again.
 
-The experimental [boxd adapter](/docs/providers/boxd/) also supports renewal and uses its own `lifetimeSeconds` configuration. [Vercel Sandbox](/docs/providers/vercel/#lifetime-cleanup-and-reopening) renewal instead **adds** 1–86,400 seconds per request to the running session; Vercel caps total session time by plan. See the [renewal example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-renew.ts) for saving and reopening a sandbox before renewal.
+The experimental [boxd adapter](/docs/providers/boxd/) also supports renewal. [Vercel Sandbox](/docs/providers/vercel/#lifetime-cleanup-and-reopening) renewal instead **adds** 1–86,400 seconds per request to the running session; Vercel caps total session time by plan. See the [renewal example](https://github.com/pandemicsyn/sandbar/blob/main/apps/docs/examples/sandbox-renew.ts) for saving and reopening a sandbox before renewal.
 
 ### Suspend and resume
 

@@ -65,6 +65,8 @@ export * from "./sizing";
 
 export * from "./lifecycle";
 
+export * from "./lifetime";
+
 export * from "./preview";
 
 export type CreateInput = {
@@ -80,6 +82,11 @@ export type CreateInput = {
    * tokens or include them in messages. Requires `supports.createEnv`.
    */
   env?: Record<string, string>;
+  /**
+   * Wall-clock lifetime for this sandbox, replacing the setup `lifecycle.lifetimeSeconds`.
+   * The runtime checks it against `supports.lifetime` before `prepare`.
+   */
+  lifetimeSeconds?: number;
 };
 
 export type CreateValue = {
@@ -336,6 +343,11 @@ export type Guarantees<C extends Command["kind"] = Command["kind"]> = {
    * and terminal, including after reopen in another process. Absent rejects create `env`.
    */
   createEnv?: boolean;
+  /**
+   * Per-create `lifetimeSeconds` this connection applies natively, in whole seconds. Absent
+   * rejects a per-create lifetime; the setup lifetime still applies.
+   */
+  lifetime?: import("./lifetime").LifetimeLimits;
 };
 
 export type AdapterSession<

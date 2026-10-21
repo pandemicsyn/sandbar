@@ -60,6 +60,8 @@ try {
 }
 ```
 
+Every sandbox has a wall-clock lifetime after which the provider removes it: `lifecycle: { lifetimeSeconds }` in adapter setup (default 900) on every adapter, or `create({ lifecycle: { lifetimeSeconds: 3600 } })` for one sandbox. Adapters round up, never down, and reject a value they cannot apply before creating anything; `capabilities().lifetime` gives the per-create range. Older names (`timeoutSeconds`, `ttlMinutes`, boxd's top-level `lifetimeSeconds`) are deprecated.
+
 `close()` never destroys a sandbox, and aborting a wait never stops remote compute. Always destroy what you created, inside `finally`, and close the client in an outer `finally`.
 
 ## Commands

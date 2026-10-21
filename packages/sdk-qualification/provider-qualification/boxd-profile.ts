@@ -121,7 +121,7 @@ export default defineProviderProfile({
           volumes: { sizeBytes: 1024 ** 3 },
           image: config.imageId,
           networkPolicy: config.networkPolicy,
-          lifetimeSeconds: config.nativeLifetimeSeconds,
+          lifecycle: { lifetimeSeconds: config.nativeLifetimeSeconds },
           preview: { access: config.previewAccess, ports: [3000, 3001] },
         },
         cleanup: { storage: "allow-unconfirmed" },

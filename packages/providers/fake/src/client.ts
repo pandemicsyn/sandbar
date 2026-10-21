@@ -232,6 +232,7 @@ export class FakeProviderDriver implements ProviderDriver {
     networkPolicy: string;
     labels?: Record<string, string>;
     env?: Record<string, string>;
+    lifetimeSeconds?: number;
   }) {
     return this.mutation(
       {
@@ -242,6 +243,7 @@ export class FakeProviderDriver implements ProviderDriver {
         networkPolicy: input.networkPolicy,
         labels: input.labels,
         env: input.env,
+        lifetimeSeconds: input.lifetimeSeconds,
       },
       input.identity.submissionId,
     );

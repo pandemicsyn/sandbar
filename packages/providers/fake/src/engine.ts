@@ -86,6 +86,8 @@ const ResourceSchema = z.strictObject({
   labels: z.record(z.string(), z.string()),
   /** Sandbox-wide environment; exec fixtures match it merged under per-call env. */
   env: z.record(z.string(), z.string()).optional(),
+  /** Requested wall-clock lifetime; the fake records it but never expires a sandbox. */
+  lifetimeSeconds: z.number().int().positive().optional(),
   files: z.record(z.string(), FakeFileBytesBase64),
   sequence: z.number().int().nonnegative(),
 });
@@ -551,6 +553,7 @@ export class FakeProviderEngine {
     networkPolicy: string;
     labels?: Record<string, string>;
     env?: Record<string, string>;
+    lifetimeSeconds?: number;
   }): Promise<{ result: z.infer<typeof DriverResult>; loseResponse: boolean }> {
     const requestHash = await intentSha256(input);
 
@@ -608,6 +611,8 @@ export class FakeProviderEngine {
         };
 
         if (input.env && Object.keys(input.env).length) resource.env = { ...input.env };
+
+        if (input.lifetimeSeconds !== undefined) resource.lifetimeSeconds = input.lifetimeSeconds;
         this.state.resources.push(resource);
 
         const result: z.infer<typeof DriverResult> = {

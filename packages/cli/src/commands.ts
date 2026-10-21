@@ -86,6 +86,8 @@ type CreateRequest = {
   env: Record<string, string>;
   /** Build --image now when the provider needs a build and none is recorded. */
   build: boolean;
+  /** `--ttl`: this sandbox's lifetime in seconds, replacing the profile's. */
+  lifetimeSeconds?: number;
 };
 
 function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRequest {
@@ -93,6 +95,7 @@ function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRe
     throw usage("Pass either --image or --prepared, not both");
 
   if (flags.bool("build") && !flags.string("image")) throw usage("--build needs --image");
+  const ttl = flags.string("ttl");
 
   return {
     build: flags.bool("build"),
@@ -103,6 +106,7 @@ function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRe
     network: flags.string("network"),
     labels: parsePairs(flags.strings("label"), "label"),
     env,
+    lifetimeSeconds: ttl === undefined ? undefined : parseDuration(ttl, "ttl"),
   };
 }
 
@@ -212,6 +216,10 @@ function createInput(request: CreateRequest): CreateInput {
     network: request.network,
     labels: Object.keys(request.labels).length ? request.labels : undefined,
     env: Object.keys(request.env).length ? request.env : undefined,
+    lifecycle:
+      request.lifetimeSeconds === undefined
+        ? undefined
+        : { lifetimeSeconds: request.lifetimeSeconds },
   };
 }
 
