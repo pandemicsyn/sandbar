@@ -5,6 +5,8 @@ import {
   AdapterError,
   assertResourceScope,
   defineAdapter,
+  Preserve,
+  PreserveSchema,
   resolveSnapshot,
   ResourceMinimums,
   type AttemptContext,
@@ -49,6 +51,8 @@ const Configuration = z.strictObject({
   resources: ResourceMinimums.optional(),
   /** Modal allows sandboxes to run for up to 24 hours. */
   timeoutSeconds: z.coerce.number().int().min(60).max(86_400).default(900),
+  /** Modal filesystem snapshots keep files only; `filesystem+memory` rejects at connect. */
+  snapshots: z.strictObject({ preserve: PreserveSchema }).optional(),
 });
 
 const Credentials = z.strictObject({
@@ -76,7 +80,7 @@ const SNAPSHOT_RETENTION_SECONDS = 30 * 86_400;
 
 const snapshotProfile: SnapshotProfile = {
   id: "modal-filesystem",
-  preserve: "filesystem",
+  preserve: Preserve.FILESYSTEM,
   sourceStates: ["running"],
   // Modal does not document whether a filesystem snapshot pauses the source; claim no less.
   interruption: "pause",
@@ -169,6 +173,12 @@ export function createModalAdapter(
     config: Configuration,
     credentials: Credentials,
     async connect({ config, credentials, host }) {
+      if (config.snapshots?.preserve === Preserve.FILESYSTEM_AND_MEMORY)
+        throw new AdapterError(
+          "UNSUPPORTED",
+          "Modal snapshots keep the filesystem only; memory snapshots are not supported",
+        );
+
       const options = { ...config, ...credentials };
       const transport = transportFactory?.(options) ?? createSdkTransport(options);
       host.onClose(() => transport.close());

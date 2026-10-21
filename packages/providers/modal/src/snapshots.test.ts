@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { status } from "@grpc/grpc-js";
-import { OutcomeUnknownError, Sandbar } from "sandbar-sdk";
+import { OutcomeUnknownError, Preserve, Sandbar } from "sandbar-sdk";
 import { createModalAdapter } from "./adapter";
 import { createRejection, type ModalTransport } from "./transport";
 
@@ -99,6 +99,7 @@ function fixture() {
     });
 
   return {
+    transport,
     records,
     images,
     creates,
@@ -235,5 +236,42 @@ test("Modal snapshot references are bound to the verified App and environment", 
   } finally {
     await main.close();
     await other.close();
+  }
+});
+
+test("Modal accepts filesystem-only preserve and rejects memory at connect before any call", async () => {
+  let factories = 0;
+  const native = fixture();
+
+  const adapter = createModalAdapter(() => {
+    factories++;
+
+    return native.transport;
+  });
+
+  const connect = (preserve: (typeof Preserve)[keyof typeof Preserve]) =>
+    Sandbar.connect({
+      adapter,
+      config: {
+        appName: "existing",
+        environment: "main",
+        image: "im-base",
+        snapshots: { preserve },
+      },
+      credentials: { tokenId: "ak-fixture", tokenSecret: "as-fixture" },
+    });
+
+  await expect(connect(Preserve.FILESYSTEM_AND_MEMORY)).rejects.toMatchObject({
+    code: "UNSUPPORTED",
+  });
+  expect(factories).toBe(0);
+
+  const client = await connect(Preserve.FILESYSTEM);
+
+  try {
+    const { capture } = await (await client.sandboxes.create()).snapshot();
+    expect(capture.preserve).toBe(Preserve.FILESYSTEM);
+  } finally {
+    await client.close();
   }
 });
