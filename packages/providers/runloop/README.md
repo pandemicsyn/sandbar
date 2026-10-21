@@ -36,6 +36,7 @@ Scope is the account id from `GET /v1/accounts/me` plus the fixed `https://api.r
 
 - **Create** sends `sandbar_operation`/`sandbar_submission` metadata, a tunnel and create-time `env`, then waits for `running`. A lost response is recovered by finding the marker, never by resending.
 - **Exec** supports argv and shell, `cwd`, `env`, finite stdin and deadlines up to an hour. A small `sh` wrapper keeps arguments quoted; results up to 32 KiB return inline as base64 and larger ones are downloaded as bytes. Output is bounded to 1 MiB per stream. Deadline overruns kill the execution and report `OUTCOME_UNKNOWN`.
+- **Streaming processes** run through `execute` with no deadline and follow Runloop's server-sent log streams (`stream_stdout_updates`, `stream_stderr_updates`), reopening from byte offsets; exit comes from `wait_for_status`. Output is UTF-8 text only, so `format: "bytes"` and callback exec are unsupported. `terminate()` kills the execution. Piped stdin, terminals, signals and reopen are unsupported. Offset semantics and stream closing at exit are taken from Runloop's API reference and are untested against the live service.
 - **Files** read and overwrite up to 64 MiB. No-clobber writes are unsupported.
 - **Suspend/resume** keeps the disk only; resume starts fresh processes.
 - **Snapshots** capture the disk asynchronously while the Devbox keeps running; restore creates a new Devbox. List, inspect and delete are supported.

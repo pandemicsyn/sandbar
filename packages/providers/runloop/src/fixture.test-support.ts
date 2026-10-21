@@ -143,6 +143,7 @@ export function runloopFixture() {
   let dropNextPolicy = false;
   let releaseHeld: (() => void) | undefined;
   let held: Promise<void> | undefined;
+  const logQueries: string[] = [];
   let nextFault: { pattern: RegExp; response: Response | "lost" } | undefined;
   let commandOverride: ((command: string) => CommandResult | undefined) | undefined;
   /** Polls a devbox needs before it reports its next settled state. */
@@ -477,6 +478,26 @@ export function runloopFixture() {
       return json(200, executionView(execution, Number(url.searchParams.get("last_n") ?? 100)));
     }
 
+    const logMatch = /^executions\/([^/]+)\/stream_(stdout|stderr)_updates$/.exec(rest ?? "");
+
+    if (logMatch && method === "GET") {
+      const execution = executions.get(logMatch[1] ?? "");
+
+      if (!execution || execution.devbox !== id) return error(404);
+      const stream = logMatch[2] === "stderr" ? "stderr" : "stdout";
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      logQueries.push(`${stream}@${offset}`);
+
+      // Everything the command will write is visible at once; the stream then closes.
+      const bytes = new TextEncoder().encode(execution.result[stream]).subarray(offset);
+
+      const event = bytes.length
+        ? `data: ${JSON.stringify({ offset, output: new TextDecoder().decode(bytes) })}\n\n`
+        : "";
+
+      return new Response(event, { headers: { "content-type": "text/event-stream" } });
+    }
+
     const executionMatch = /^executions\/([^/]+)\/(wait_for_status|kill)$/.exec(rest ?? "");
 
     if (executionMatch && method === "POST") {
@@ -543,6 +564,7 @@ export function runloopFixture() {
     snapshots,
     policies,
     workdir,
+    logQueries,
     count: (method: string, pattern: RegExp) =>
       calls.filter((call) => call.method === method && pattern.test(call.path)).length,
     setSettlePolls(value: number) {

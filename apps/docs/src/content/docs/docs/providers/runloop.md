@@ -45,15 +45,20 @@ Create-time `env` is sent as Runloop environment variables. `region`, `labels` a
 
 Everything below is tested against a simulated Runloop API on every change. **No live Runloop run has been made yet.**
 
-| Feature           | Support                                                                                                                                    | Live tested |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
-| Compute lifecycle | Create, inspect, inventory, `sandboxes.list()`, reference reopening, and destroy by confirmed shutdown.                                    | No          |
-| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to an hour.        | No          |
-| Files             | Binary read and overwrite write up to 64 MiB. No-clobber writes are unsupported.                                                           | No          |
-| Suspend/resume    | `suspend()` keeps the disk; `resume()` starts fresh processes. Memory and connections are not kept.                                        | No          |
-| Snapshots         | `snapshot()` captures the disk while the Devbox keeps running; `restore()` creates a new Devbox from it; list, inspect and delete.         | No          |
-| Previews          | `preview(port)` returns the Devbox tunnel URL for that port, created with the Devbox.                                                      | No          |
-| Unsupported       | OCI images and image builds, volumes, mounts, egress allowlists, renewal, interactive processes, directory operations, regions and labels. | —           |
+| Feature           | Support                                                                                                                                                     | Live tested |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Compute lifecycle | Create, inspect, inventory, `sandboxes.list()`, reference reopening, and destroy by confirmed shutdown.                                                     | No          |
+| Commands          | argv and shell, with `cwd` and `env`; exact stdout/stderr bytes up to 1 MiB per stream; finite byte stdin; deadlines up to an hour.                         | No          |
+| Streaming output  | Live stdout/stderr as UTF-8 text from Runloop's log streams; stop with `terminate()`. No byte output.                                                       | No          |
+| Files             | Binary read and overwrite write up to 64 MiB. No-clobber writes are unsupported.                                                                            | No          |
+| Suspend/resume    | `suspend()` keeps the disk; `resume()` starts fresh processes. Memory and connections are not kept.                                                         | No          |
+| Snapshots         | `snapshot()` captures the disk while the Devbox keeps running; `restore()` creates a new Devbox from it; list, inspect and delete.                          | No          |
+| Previews          | `preview(port)` returns the Devbox tunnel URL for that port, created with the Devbox.                                                                       | No          |
+| Unsupported       | OCI images and image builds, volumes, mounts, egress allowlists, renewal, piped input, byte streaming, terminals, directory operations, regions and labels. | —           |
+
+## How streamed commands work
+
+`processes.start({ output: { mode: "stream" } })` starts the command with Runloop's `execute`, with no deadline and stdin from `/dev/null`. Output comes from Runloop's server-sent `stream_stdout_updates` and `stream_stderr_updates` endpoints as UTF-8 text with byte offsets; a stream that closes while the command is still running, or a dropped connection, is reopened from its offset. Exit comes from Runloop's status long-poll. If the log streams have not closed 10 seconds after exit, the output is reported incomplete. Byte output (`format: "bytes"`) and callback exec are not supported. `terminate()` kills the execution through Runloop; `detach()` leaves it running.
 
 ## How commands keep bytes and arguments
 

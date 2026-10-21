@@ -393,6 +393,22 @@ export function createRunloopClient(apiKey: string, fetch: Fetch = globalThis.fe
         { last_n: "8" },
         { json: JSON.stringify({ statuses: ["completed"], timeout_seconds: seconds }) },
       ),
+    /** Server-sent log updates for one stream; the caller reads and bounds the body. */
+    streamUpdates: (
+      id: string,
+      execution: string,
+      stream: "stdout" | "stderr",
+      offset: number,
+      signal: AbortSignal,
+    ) =>
+      send(
+        "GET",
+        `/v1/devboxes/${encode(id)}/executions/${encode(execution)}/stream_${stream}_updates`,
+        signal,
+        { offset },
+        undefined,
+        "text/event-stream",
+      ),
     killExecution: (id: string, execution: string, signal: AbortSignal) =>
       json(
         Execution,
