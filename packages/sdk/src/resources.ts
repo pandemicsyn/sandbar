@@ -1,4 +1,5 @@
 import { freezeReference } from "./freeze-reference";
+import { CreateEnv } from "@sandbar-sdk/adapter/portable";
 import { z } from "zod";
 import {
   ResourceReference,
@@ -10,6 +11,7 @@ import {
   ImageInfo,
   VolumeInfo,
   RestoreRequest,
+  restoreOptionProblem,
   VolumeCreateInput,
   InventoryInput,
   SandboxListItem,
@@ -72,9 +74,14 @@ async function resourceRead<T>(
 }
 
 /** SDK restore input; native RestoreRequest remains fully resolved. */
-export type RestoreInput = Omit<RestoreRequest, "networkPolicy"> & {
+export type RestoreInput = Omit<RestoreRequest, "networkPolicy" | "lifetimeSeconds"> & {
   /** Outbound network policy; omitted uses the adapter setup default. */
   network?: NetworkPolicy;
+  /**
+   * Lifetime for the restored sandbox only, replacing the adapter setup's. Like `env` and
+   * `labels`, it rejects before any effect where the adapter cannot apply it on restore.
+   */
+  lifecycle?: { lifetimeSeconds?: number };
   /** @deprecated Use `network`. */
   networkPolicy?: string;
 };
@@ -165,7 +172,24 @@ export class AdapterSnapshot {
       .safeParse(normalized);
 
     if (!selection.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid restore request");
-    const { network, ...rest } = selection.data;
+    const { network, lifecycle, ...rest } = selection.data;
+
+    // Report only the bounds; environment keys and values never enter a message.
+    if (rest.env !== undefined && !CreateEnv.safeParse(rest.env).success)
+      throw new SandbarError(
+        "INVALID_ARGUMENT",
+        "Invalid restore env: use at most 128 names matching [A-Za-z_][A-Za-z0-9_]* with string values without NUL, 64 KiB in total",
+      );
+
+    const lifetime = z
+      .strictObject({ lifetimeSeconds: z.number().int().positive().safe().optional() })
+      .optional()
+      .safeParse(lifecycle);
+
+    if (!lifetime.success) throw new SandbarError("INVALID_ARGUMENT", "Invalid restore lifecycle");
+
+    if (lifetime.data?.lifetimeSeconds !== undefined)
+      rest.lifetimeSeconds = lifetime.data.lifetimeSeconds;
 
     const checked = validateResourceInput(
       RestoreRequest.partial({ networkPolicy: true }),
@@ -196,6 +220,13 @@ export class AdapterSnapshot {
 
     if (!input.mounts?.length && this.client.session.snapshotRestore?.mountInput !== "specs")
       delete input.mounts;
+
+    if (input.env && !Object.keys(input.env).length) delete input.env;
+
+    if (input.labels && !Object.keys(input.labels).length) delete input.labels;
+    const unsupported = restoreOptionProblem(this.client.session.snapshotRestore?.options, input);
+
+    if (unsupported) throw new UnsupportedFeatureError("snapshot restore", [unsupported]);
     const info = await this.inspect(options);
 
     if (info.state !== "ready" || info.preserve === null)

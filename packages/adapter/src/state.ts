@@ -298,9 +298,40 @@ export const RestoreRequest = z.strictObject({
     })
     .optional(),
   mounts: z.array(MountSpec).max(32).optional(),
+  /** Sandbox-wide environment for the restored sandbox; the runtime checks it like create env. */
+  env: z.record(z.string(), z.string()).optional(),
+  labels: z.record(z.string().min(1).max(64), z.string().max(256)).optional(),
+  /** This sandbox's lifetime, replacing the adapter setup's. */
+  lifetimeSeconds: z.number().int().positive().safe().optional(),
 });
 
 export type RestoreRequest = z.infer<typeof RestoreRequest>;
+
+/** The create options a restore applies; anything else rejects before an effect. */
+export const RestoreOptions = z.strictObject({
+  env: z.boolean().optional(),
+  labels: z.boolean().optional(),
+  lifetime: LifetimeLimits.optional(),
+});
+
+export type RestoreOptions = z.infer<typeof RestoreOptions>;
+
+/** Why a restore request asks for an option this adapter does not apply, or null. */
+export function restoreOptionProblem(
+  options: RestoreOptions | undefined,
+  request: Pick<RestoreRequest, "env" | "labels" | "lifetimeSeconds">,
+): string | null {
+  if (request.env && Object.keys(request.env).length && !options?.env)
+    return "Restore-time environment variables are unsupported by this adapter";
+
+  if (request.labels && Object.keys(request.labels).length && !options?.labels)
+    return "Restore-time labels are unsupported by this adapter";
+
+  if (request.lifetimeSeconds !== undefined && !options?.lifetime)
+    return "A restore-time lifetime is unsupported by this adapter";
+
+  return lifetimeProblem(options?.lifetime, request.lifetimeSeconds);
+}
 
 export const SnapshotInfo = z.strictObject({
   reference: ResourceReference.refine((ref) => ref.kind === "snapshot"),
@@ -506,6 +537,8 @@ export const RestoreCapabilities = z.strictObject({
   resources: z.boolean(),
   mounts: z.boolean(),
   independentLifecycle: z.boolean(),
+  /** Create options a restore applies; filled from the adapter's restore hook. */
+  options: RestoreOptions.optional(),
 });
 
 export type RestoreCapabilities = z.infer<typeof RestoreCapabilities>;
@@ -731,7 +764,15 @@ export async function stateCapabilities(
     },
     snapshots: {
       capture,
-      restore: session.snapshotRestore ? resources.restore : unsupportedState(),
+      restore:
+        session.snapshotRestore && resources.restore.status === "supported"
+          ? {
+              status: "supported",
+              value: { ...resources.restore.value, options: session.snapshotRestore.options ?? {} },
+            }
+          : session.snapshotRestore
+            ? resources.restore
+            : unsupportedState(),
       inspect: implemented(!!session.snapshotInspect),
       list: session.snapshotList
         ? session.snapshotListCoverage

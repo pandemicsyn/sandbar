@@ -14,6 +14,7 @@ import {
   type AdapterSession,
   type AttemptContext,
   type CreateInput,
+  type RestoreOptions,
   type ExecInput,
   type Fact,
   type FileWriteInput,
@@ -1084,6 +1085,9 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
       );
     };
 
+    // A restore boots fresh from the disk snapshot, so env applies as on create.
+    const restoreOptions: RestoreOptions = { env: true };
+
     const result: AdapterSession<
       PreparedCreate,
       PreparedDestroy,
@@ -1553,6 +1557,7 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
       },
       snapshotRestore: {
         recovery: { version: 1, token: CreateToken },
+        options: restoreOptions,
         async prepare(input, ctx) {
           checkSnapshot(input.snapshot);
 
@@ -1581,6 +1586,8 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
             {
               image: { kind: "prepared", value: config.image },
               networkPolicy: input.request.networkPolicy,
+              env: input.request.env,
+              lifetimeSeconds: input.request.lifetimeSeconds,
             },
             { snapshot_id: input.snapshot.nativeId },
             readContext(ctx.signal),
@@ -1669,8 +1676,10 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
     };
 
     // An idle window replaces the lifetime natively, so a per-create lifetime needs none set.
-    if (config.lifecycle.idleSeconds === undefined)
+    if (config.lifecycle.idleSeconds === undefined) {
       result.supports.lifetime = { minSeconds: 60, maxSeconds: MAX_LIFETIME_SECONDS };
+      restoreOptions.lifetime = result.supports.lifetime;
+    }
 
     async function finishCapture(
       token: z.infer<typeof CaptureToken>,

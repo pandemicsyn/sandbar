@@ -87,7 +87,7 @@ sandbar run --snapshot deps --cwd /work/app -- npm test
 
 `snapshot create <sandbox>` captures a sandbox from the store and records the snapshot under `--name` (default `<sandbox>-snap`). What it keeps, files only or memory too, and whether the source pauses during capture depend on the provider and the profile's `snapshots.preserve`; the command prints both. A provider that cannot capture fails with exit 4 before anything happens.
 
-`create --snapshot <name>` and `run --snapshot <name>` start a sandbox from a recorded snapshot, on the profile that captured it. The snapshot fixes the image, so `--image`, `--prepared` and `--build` do not apply, and neither do `--label`, `--ttl` or create-time `--env`: the profile's settings are used instead. `run --env` still sets the command's environment.
+`create --snapshot <name>` and `run --snapshot <name>` start a sandbox from a recorded snapshot, on the profile that captured it. The snapshot fixes the image, so `--image`, `--prepared` and `--build` do not apply. `--env`, `--label` and `--ttl` work as on any create, for example to pass a CI job its secrets. A provider that can't apply one of them on restore fails with exit 4 before anything is created: Boat and boxd take only `--ttl`, Runloop takes `--env` and `--ttl`, and E2B takes `--env` only for filesystem snapshots, because a memory snapshot resumes its processes with the environment they had.
 
 To refresh a snapshot, capture it again with `snapshot create <sandbox> --name <name> --replace`. The record keeps the old snapshot until the new one exists, then the old one is deleted. A snapshot still in use by a running sandbox can't be deleted; the command says so and leaves it on the provider.
 

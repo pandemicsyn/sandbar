@@ -99,14 +99,10 @@ type CreateRequest = {
   snapshot?: string;
 };
 
-/** Create flags a restore cannot honor: the snapshot fixes the image, and restore takes no labels, env or lifetime. */
-const notWithSnapshot = ["image", "prepared", "build", "label", "ttl", "env", "env-file"] as const;
+/** Create flags a restore cannot honor: the snapshot fixes the image. */
+const notWithSnapshot = ["image", "prepared", "build"] as const;
 
-function createRequest(
-  flags: Flags,
-  env: Record<string, string> = {},
-  withEnv = false,
-): CreateRequest {
+function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRequest {
   if (flags.string("image") && flags.string("prepared"))
     throw usage("Pass either --image or --prepared, not both");
 
@@ -115,15 +111,12 @@ function createRequest(
   const snapshot = flags.string("snapshot");
 
   if (snapshot) {
-    // For run, --env and --env-file belong to the command, not the sandbox, so they stay allowed.
-    const conflicting = notWithSnapshot.find(
-      (name) => flags.has(name) && (withEnv || (name !== "env" && name !== "env-file")),
-    );
+    const conflicting = notWithSnapshot.find((name) => flags.has(name));
 
     if (conflicting)
       throw usage(
         `--snapshot cannot be combined with --${conflicting}`,
-        "a restore keeps the snapshot's image and the profile's labels, environment and lifetime",
+        "a restore starts from the snapshot's image",
       );
   }
 
@@ -396,7 +389,7 @@ async function createSandbox(session: Session, request: CreateRequest): Promise<
 
   try {
     box = source
-      ? await restoreSnapshot(session, client, source, request.network)
+      ? await restoreSnapshot(session, client, source, input)
       : await client.sandboxes.create(input, { signal: session.ctx.signal });
   } catch (cause) {
     const report = describeError(cause);
@@ -543,7 +536,7 @@ export async function findTarget(session: Session, target: string): Promise<Targ
 export async function createCommand(session: Session, flags: Flags): Promise<number> {
   const created = await createSandbox(
     session,
-    createRequest(flags, await envFlags(session, flags), true),
+    createRequest(flags, await envFlags(session, flags)),
   );
 
   if (created.unrecorded) throw unrecordedError(created);

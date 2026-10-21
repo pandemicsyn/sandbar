@@ -445,6 +445,7 @@ export function createFakeAdapter(options: {
         | "snapshotList"
         | "snapshotDelete"
         | "snapshotRestore"
+        | "resourceCapabilities"
       > = {
         async snapshotProfiles() {
           return {
@@ -532,8 +533,14 @@ export function createFakeAdapter(options: {
               : { deleted: true as const, reference: ref };
           },
         },
+        resourceCapabilities: async () => ({
+          restore: { status: "supported" as const, value: restoreSupport },
+          volumes: { status: "unsupported" as const, reason: "The fake has no volumes" },
+          mounts: { status: "unsupported" as const, reason: "The fake has no mounts" },
+        }),
         snapshotRestore: {
           recovery: { version: 1, token: Token },
+          options: { env: true, labels: true, lifetime: { minSeconds: 1, maxSeconds: 86_400 } },
           async prepare(input) {
             if (input.request.resources || input.request.mounts?.length)
               throw new AdapterError("UNSUPPORTED", "Fake restores take no sizing or mounts");
@@ -551,6 +558,9 @@ export function createFakeAdapter(options: {
                 identity: identity(ctx),
                 image: input.snapshot.nativeId,
                 networkPolicy: input.request.networkPolicy,
+                labels: input.request.labels,
+                env: input.request.env,
+                lifetimeSeconds: input.request.lifetimeSeconds,
               }),
               ctx,
               bindingScope,
@@ -662,6 +672,7 @@ export function createFakeAdapter(options: {
         snapshotList: snapshotHooks?.snapshotList,
         snapshotDelete: snapshotHooks?.snapshotDelete,
         snapshotRestore: snapshotHooks?.snapshotRestore,
+        resourceCapabilities: snapshotHooks?.resourceCapabilities,
         imageBuild: options.imageBuild ? imageBuild : undefined,
         processes,
         scope: bindingScope,

@@ -812,11 +812,19 @@ export function createDaytonaAdapter(
 
       const createMutation = {
         mountInput: "specs" as const,
+        // Daytona restores boot fresh from a filesystem snapshot, so create options apply as on create.
+        options: {
+          env: true,
+          labels: true,
+          lifetime: { minSeconds: 1, maxSeconds: Number.MAX_SAFE_INTEGER },
+        },
         recovery: { version: 1, token: RestoreToken },
         async prepare(
           input: import("@sandbar-sdk/adapter").SnapshotRestoreInput,
           ctx: import("@sandbar-sdk/adapter").ReadContext,
         ) {
+          if ("sandbar.imageSnapshot" in (input.request.labels ?? {}))
+            throw new AdapterError("INVALID_ARGUMENT", "Reserved Daytona snapshot label");
           await validateRestore(input, ctx);
 
           const plan = await driver.prepare({
@@ -852,6 +860,12 @@ export function createDaytonaAdapter(
             requireSnapshotIdentity: true,
             networkPolicy: input.request.networkPolicy,
             mounts: input.request.mounts,
+            labels: input.request.labels,
+            env: input.request.env,
+            ttlMinutes:
+              input.request.lifetimeSeconds === undefined
+                ? undefined
+                : nativeMinutes(input.request.lifetimeSeconds),
             signal: ctx.signal,
           });
 

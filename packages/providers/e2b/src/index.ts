@@ -619,6 +619,7 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
         transport,
         scopeMarker,
         timeoutSeconds: config.lifetimeSeconds,
+        maxLifetimeSeconds: MAX_LIFETIME_SECONDS,
         snapshotPreserve: config.snapshots?.preserve ?? Preserve.FILESYSTEM_AND_MEMORY,
         apiKey: credentials.apiKey,
         allowPublicTraffic: config.preview.access === "public",
