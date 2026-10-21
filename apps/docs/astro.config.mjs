@@ -31,7 +31,6 @@ export default defineConfig({
         "The TypeScript SDK for sandboxes. Getting started, provider support, guides, and adapter authoring.",
       favicon: "/favicon.svg",
       head: [
-        { tag: "meta", attrs: { name: "robots", content: "noindex, nofollow" } },
         { tag: "link", attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" } },
         {
           tag: "link",

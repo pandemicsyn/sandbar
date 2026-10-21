@@ -72,6 +72,12 @@ test("Modal public adapter passes required managed-compute scenarios", async () 
     async result() {
       return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
     },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
+    },
     close() {
       effects.release++;
     },
@@ -248,6 +254,12 @@ test("Modal direct exec and write recover by execution ID after one uncertain su
       expect(maxBytes).toBeLessThanOrEqual(1_048_576);
 
       return value;
+    },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
     },
     close() {},
   };
@@ -445,6 +457,12 @@ test.each(["lost-start", "lost-input", "lost-result"] as const)(
 
         return result;
       },
+      async snapshotFilesystem() {
+        throw new Error("unused");
+      },
+      async deleteImage() {
+        return "missing";
+      },
       close() {},
     };
 
@@ -566,6 +584,12 @@ test("public finite stdin preserves UTF-8 bytes, output streams, cwd, env and ex
         truncated: false,
       };
     },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
+    },
     close() {},
   };
 
@@ -666,6 +690,12 @@ test("file writes require decimal byte-count evidence in submit and reopened obs
         stderr: new Uint8Array(),
         truncated: false,
       };
+    },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
     },
     close() {},
   };
@@ -790,6 +820,12 @@ test("OCI create builds only in submit and never replays an uncertain image or s
           truncated: false,
         };
       },
+      async snapshotFilesystem() {
+        throw new Error("unused");
+      },
+      async deleteImage() {
+        return "missing";
+      },
       close() {},
     };
 
@@ -896,6 +932,12 @@ test("Modal submission window covers start lookup and result; observation gets i
 
       return { exitCode: 0, stdout: Uint8Array.of(97), stderr: new Uint8Array(), truncated: false };
     },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
+    },
     close() {},
   };
 
@@ -972,6 +1014,12 @@ test("Modal setup supplies a working default image and a lifetime up to 24 hours
     async stdin() {},
     async result() {
       return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
+    },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
     },
     close() {},
   };
@@ -1057,6 +1105,12 @@ test("Modal lists the verified App's sandboxes without reopenable references", a
     async result() {
       return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
     },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
+    },
     close() {},
   };
 
@@ -1133,6 +1187,12 @@ test("Modal resources reserve the configured size and inspect reports it", async
     async stdin() {},
     async result() {
       return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), truncated: false };
+    },
+    async snapshotFilesystem() {
+      throw new Error("unused");
+    },
+    async deleteImage() {
+      return "missing";
     },
     close() {},
   };
