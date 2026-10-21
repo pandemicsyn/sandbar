@@ -3,7 +3,7 @@ title: Streaming and interactive processes
 description: Read live process output, send input, check status, and stop a process.
 ---
 
-Use `sandbox.processes.start()` when you need live output from a build, worker or server. E2B and Daytona support the process features on this page through the same SDK methods. The examples assume you already have a `sandbox` handle; see [sandboxes and execution](/docs/guides/resources/).
+Use `sandbox.processes.start()` when you need live output from a build, worker or server. E2B and Daytona support the process features on this page through the same SDK methods; boxd supports streamed output and termination (see [provider transport facts](#provider-transport-facts)). The examples assume you already have a `sandbox` handle; see [sandboxes and execution](/docs/guides/resources/).
 
 Set `output: { mode: "stream" }` for long-running processes. Sandbar keeps a small queue of unread output, so read it as it arrives. Save chunks to your own log or storage if you need a complete transcript. Output defaults to UTF-8 text, with separate stdout and stderr. Use the [byte format](#original-output-bytes) for binary data, or a [terminal](#signals-and-explicit-terminals) for programs that need terminal behavior.
 
@@ -98,6 +98,8 @@ A disconnected E2B stream can lose exit observation. The exit event can arrive b
 **Daytona** uses a small Python 3 supervisor inside the sandbox because native session input cannot deliver exact bytes and EOF. It needs Python 3 and writable private `/tmp` storage in the image. The supervisor creates a private temporary directory and Unix socket, starts one child with ordinary pipes, and exchanges bounded messages for input, output and control. It does not open a network port, download packages or install a service.
 
 The supervisor tracks the child it launched. Termination does not delete a native session or destroy the sandbox. Detach closes input and output observation. If the child still runs, its supervisor remains until child exit or sandbox destruction. Completed supervisors remove their private files.
+
+**boxd** streams output from its native `Exec` call as the command writes it, with exact bytes and separate stdout and stderr. The call is the process: `terminate()` cancels it, and boxd then sends SIGTERM to the command's process group, followed by SIGKILL after a short grace period. Because closing the call would kill the command, `detach()` stops local observation but keeps the connection open until the command exits. Incremental input, terminals, status checks and reopening are not supported.
 
 ## Finite compatibility and limits
 

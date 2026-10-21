@@ -52,7 +52,7 @@ Create-time `env` is rejected with `UnsupportedFeatureError` before allocation, 
 | Lifetime renewal             | `renew()` resets the expiry; at least 60 seconds, no maximum.                     | No          |
 | Pause and resume             | Keeps memory, processes and sockets.                                              | No          |
 | Commands                     | argv and shell, with `cwd` and `env`; exact output bytes, up to 1 MiB combined.   | Yes         |
-| Streaming and terminals      | Not supported.                                                                    | —           |
+| Streaming output             | Live stdout/stderr as text or exact bytes; stop with `terminate()`. No terminals. | No          |
 | Command input                | Finite stdin up to 1 MiB.                                                         | No          |
 | Files                        | Binary read and overwrite write up to 1 MiB; no-clobber writes; streams.          | Yes         |
 | Directories                  | List, stat, exists, mkdir, remove, copy and move. Most need Python 3.             | No          |

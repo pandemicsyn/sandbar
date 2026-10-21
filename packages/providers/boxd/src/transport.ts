@@ -27,6 +27,8 @@ export type CallContext = ReadContext & {
   uploadBytes?: number;
   stdin?: Uint8Array;
   cancelOnAbort?: boolean;
+  /** Streaming process: every output frame, unbounded, as it arrives; the call has no deadline. */
+  onOutput?: (stream: "stdout" | "stderr", bytes: Uint8Array) => void;
   onCreate?: (id: string) => Promise<void>;
 };
 
@@ -381,7 +383,8 @@ export function createNativeClient(
           encode(method),
           decode(method),
           md,
-          { deadline: new Date(ctx.deadline) },
+          // A streaming process runs until it exits or is cancelled; cancelling kills it.
+          { deadline: ctx.onOutput ? Infinity : new Date(ctx.deadline) },
         );
 
         live = call;
@@ -428,9 +431,14 @@ export function createNativeClient(
             data: ctx.signal.aborted ? new Uint8Array() : frame.data.subarray(0, remaining),
           } as typeof message;
 
-          if (bounded.data.length && ctx.output) {
-            const stream = z.object({ isStderr: z.boolean() }).parse(message);
-            ctx.output[stream.isStderr ? "stderr" : "stdout"].push(bounded.data);
+          if (frame.data.length && (ctx.output || ctx.onOutput)) {
+            const stream = z.object({ isStderr: z.boolean() }).parse(message).isStderr
+              ? "stderr"
+              : "stdout";
+
+            if (bounded.data.length) ctx.output?.[stream].push(bounded.data);
+
+            if (!ctx.signal.aborted) ctx.onOutput?.(stream, frame.data);
           }
 
           events.emit("data", bounded);
