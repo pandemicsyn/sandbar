@@ -51,6 +51,8 @@ export function run(program, args, capture = false) {
   const result = spawnSync(program, args, {
     stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
     encoding: "utf8",
+    // Pass the environment explicitly so variables set by this step reach the child.
+    env: process.env,
     shell: windows,
   });
 
