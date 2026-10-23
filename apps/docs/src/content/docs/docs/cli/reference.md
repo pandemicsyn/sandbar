@@ -48,19 +48,20 @@ Create a sandbox and print its name.
 sandbar create [--name <name>] [--image <oci-ref> | --prepared <id> | --snapshot <name>] [--network <policy>] [--ttl <duration>] [--env K=V]...
 ```
 
-| Flag                 | Description                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `--name <name>`      | Store name (default: generated, like sb-1a2b3)                                                                    |
-| `--image <oci-ref>`  | OCI image, e.g. python:3.12; default is the profile's image                                                       |
-| `--prepared <id>`    | Provider-prepared image id (template, snapshot name)                                                              |
-| `--network <policy>` | blocked or internet; default is the profile's policy                                                              |
-| `--label <k=v>`      | Label to set (repeatable)                                                                                         |
-| `--env <K=V>`        | Environment variable for every command in the sandbox (repeatable; K alone copies it from here)                   |
-| `--env-file <path>`  | Read K=V lines into the sandbox environment (repeatable; --env wins)                                              |
-| `--build`            | Build --image now if this provider needs a build and none is recorded                                             |
-| `--ttl <duration>`   | Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime |
-| `--snapshot <name>`  | Restore a snapshot recorded by `sandbar snapshot create` instead of an image                                      |
-| `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing                                                  |
+| Flag                 | Description                                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--name <name>`      | Store name (default: generated, like sb-1a2b3)                                                                       |
+| `--image <oci-ref>`  | OCI image, e.g. python:3.12; default is the profile's image                                                          |
+| `--prepared <id>`    | Provider-prepared image id (template, snapshot name)                                                                 |
+| `--network <policy>` | blocked or internet; default is the profile's policy                                                                 |
+| `--label <k=v>`      | Label to set (repeatable)                                                                                            |
+| `--env <K=V>`        | Environment variable for every command in the sandbox (repeatable; K alone copies it from here)                      |
+| `--env-file <path>`  | Read K=V lines into the sandbox environment (repeatable; --env wins)                                                 |
+| `--build`            | Build --image now if this provider needs a build and none is recorded                                                |
+| `--ttl <duration>`   | Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime    |
+| `--snapshot <name>`  | Restore a snapshot recorded by `sandbar snapshot create` instead of an image                                         |
+| `--retry <duration>` | Keep retrying for up to this long when the provider refuses before creating anything (rate limit, capacity), e.g. 5m |
+| `--if-not-exists`    | Return the named sandbox if it is still alive instead of failing                                                     |
 
 Examples:
 
@@ -69,6 +70,7 @@ sandbar create --name web --network internet
 sandbar create --name job-42 --if-not-exists --json
 sandbar create --name ci --env-file .env --env API_TOKEN
 sandbar create --name job-42 --ttl 1h
+sandbar create --name job-42 --retry 5m --json
 ```
 
 ## ls
@@ -209,28 +211,29 @@ Create a sandbox, run one command, and always destroy it.
 sandbar run [create flags] [exec flags] [--keep] [--push <path>] -- <command> [args...]
 ```
 
-| Flag                   | Description                                                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `--name <name>`        | Store name (default: generated, like sb-1a2b3)                                                                    |
-| `--image <oci-ref>`    | OCI image, e.g. python:3.12; default is the profile's image                                                       |
-| `--prepared <id>`      | Provider-prepared image id (template, snapshot name)                                                              |
-| `--network <policy>`   | blocked or internet; default is the profile's policy                                                              |
-| `--label <k=v>`        | Label to set (repeatable)                                                                                         |
-| `--env <K=V>`          | Environment variable for this command (repeatable; K alone copies it from here)                                   |
-| `--env-file <path>`    | Read K=V lines into this command's environment (repeatable; --env wins)                                           |
-| `--build`              | Build --image now if this provider needs a build and none is recorded                                             |
-| `--ttl <duration>`     | Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime |
-| `--snapshot <name>`    | Restore a snapshot recorded by `sandbar snapshot create` instead of an image                                      |
-| `--cwd <dir>`          | Working directory in the sandbox                                                                                  |
-| `--stdin`              | Send this process's stdin to the command                                                                          |
-| `--stdin-file <path>`  | Send a local file as the command's stdin                                                                          |
-| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                                                                |
-| `--max-output <size>`  | Captured output limit for buffered and --json output, e.g. 1m                                                     |
-| `--no-stream`          | Print the output when the command ends instead of as it arrives                                                   |
-| `--keep`               | Keep the sandbox and print its name on stderr                                                                     |
-| `--push <path>`        | Send a local folder to ~/work first and run the command there                                                     |
-| `--exclude <glob>`     | Skip matching paths (repeatable; a pattern without / matches any name)                                            |
-| `--include-ignored`    | Send every file, not only git-tracked and unignored ones                                                          |
+| Flag                   | Description                                                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--name <name>`        | Store name (default: generated, like sb-1a2b3)                                                                       |
+| `--image <oci-ref>`    | OCI image, e.g. python:3.12; default is the profile's image                                                          |
+| `--prepared <id>`      | Provider-prepared image id (template, snapshot name)                                                                 |
+| `--network <policy>`   | blocked or internet; default is the profile's policy                                                                 |
+| `--label <k=v>`        | Label to set (repeatable)                                                                                            |
+| `--env <K=V>`          | Environment variable for this command (repeatable; K alone copies it from here)                                      |
+| `--env-file <path>`    | Read K=V lines into this command's environment (repeatable; --env wins)                                              |
+| `--build`              | Build --image now if this provider needs a build and none is recorded                                                |
+| `--ttl <duration>`     | Destroy the sandbox after this long even if nothing removes it, e.g. 30m or 2h; default is the profile's lifetime    |
+| `--snapshot <name>`    | Restore a snapshot recorded by `sandbar snapshot create` instead of an image                                         |
+| `--retry <duration>`   | Keep retrying for up to this long when the provider refuses before creating anything (rate limit, capacity), e.g. 5m |
+| `--cwd <dir>`          | Working directory in the sandbox                                                                                     |
+| `--stdin`              | Send this process's stdin to the command                                                                             |
+| `--stdin-file <path>`  | Send a local file as the command's stdin                                                                             |
+| `--timeout <duration>` | Execution deadline, e.g. 90s or 10m (default 300s)                                                                   |
+| `--max-output <size>`  | Captured output limit for buffered and --json output, e.g. 1m                                                        |
+| `--no-stream`          | Print the output when the command ends instead of as it arrives                                                      |
+| `--keep`               | Keep the sandbox and print its name on stderr                                                                        |
+| `--push <path>`        | Send a local folder to ~/work first and run the command there                                                        |
+| `--exclude <glob>`     | Skip matching paths (repeatable; a pattern without / matches any name)                                               |
+| `--include-ignored`    | Send every file, not only git-tracked and unignored ones                                                             |
 
 Exits with the remote command's exit code; failures of the CLI itself exit 125.
 

@@ -129,6 +129,12 @@ const createFlags = {
     value: "name",
     description: "Restore a snapshot recorded by `sandbar snapshot create` instead of an image",
   },
+  retry: {
+    type: "string",
+    value: "duration",
+    description:
+      "Keep retrying for up to this long when the provider refuses before creating anything (rate limit, capacity), e.g. 5m",
+  },
 } satisfies Record<string, FlagSpec>;
 
 const execFlags = {
@@ -202,6 +208,7 @@ export const commands: readonly CommandSpec[] = [
       "sandbar create --name job-42 --if-not-exists --json",
       "sandbar create --name ci --env-file .env --env API_TOKEN",
       "sandbar create --name job-42 --ttl 1h",
+      "sandbar create --name job-42 --retry 5m --json",
     ],
     run: createCommand,
   },

@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, posix, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   AdapterSandbox,
   Image,
@@ -97,6 +98,8 @@ type CreateRequest = {
   lifetimeSeconds?: number;
   /** `--snapshot`: restore this recorded snapshot instead of creating from an image. */
   snapshot?: string;
+  /** `--retry`: keep retrying a create the provider refused before any effect, for this long. */
+  retrySeconds?: number;
 };
 
 /** Create flags a restore cannot honor: the snapshot fixes the image. */
@@ -108,6 +111,7 @@ function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRe
 
   if (flags.bool("build") && !flags.string("image")) throw usage("--build needs --image");
   const ttl = flags.string("ttl");
+  const retry = flags.string("retry");
   const snapshot = flags.string("snapshot");
 
   if (snapshot) {
@@ -131,6 +135,7 @@ function createRequest(flags: Flags, env: Record<string, string> = {}): CreateRe
     env,
     lifetimeSeconds: ttl === undefined ? undefined : parseDuration(ttl, "ttl"),
     snapshot,
+    retrySeconds: retry === undefined ? undefined : parseDuration(retry, "retry"),
   };
 }
 
@@ -307,7 +312,48 @@ async function restoreProfile(session: Session, source: SnapshotRecord): Promise
   return session.profileNamed(source.profile);
 }
 
+/** First wait between `--retry` attempts, doubled each time up to the cap. */
+const RETRY_FIRST_MS = 1000;
+
+const RETRY_CAP_MS = 30_000;
+
+/**
+ * Create, and with `--retry` try again while the provider refuses with a retryable error (rate
+ * limit, capacity, unavailable) before any effect. An uncertain outcome is never retried, since
+ * the first sandbox may exist.
+ */
 async function createSandbox(session: Session, request: CreateRequest): Promise<Created> {
+  if (request.retrySeconds === undefined) return createOnce(session, request);
+  const deadline = Date.now() + request.retrySeconds * 1000;
+  const { out, signal } = session.ctx;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await createOnce(session, request);
+    } catch (cause) {
+      const report = describeError(cause);
+      const ceiling = Math.min(RETRY_CAP_MS, RETRY_FIRST_MS * 2 ** attempt);
+      // Half fixed, half random, so parallel jobs that were refused together spread out.
+      const wait = Math.round(ceiling / 2 + Math.random() * (ceiling / 2));
+
+      if (!report.retryable || signal.aborted || Date.now() + wait > deadline) throw cause;
+      out.note(`create refused (${report.code}: ${report.message}); retrying in ${seconds(wait)}`);
+
+      try {
+        await sleep(wait, undefined, { signal });
+      } catch {
+        // Interrupted while waiting: nothing was created, so report the last refusal.
+        throw cause;
+      }
+    }
+  }
+}
+
+function seconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+async function createOnce(session: Session, request: CreateRequest): Promise<Created> {
   const store = await session.store();
   const source = request.snapshot ? await snapshotSource(session, request.snapshot) : null;
   const profile = source ? await restoreProfile(session, source) : await session.profile();
