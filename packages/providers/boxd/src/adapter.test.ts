@@ -964,6 +964,9 @@ test("boxd lists org machines with unknown-ownership references that reopen", as
       id: "not-a-uuid",
       state: "stopped",
       reference: null,
+      // boxd machines carry no labels; the creation time is native.
+      labels: null,
+      createdAt: new Date(1_800_000_000_000).toISOString(),
     });
 
     const listed = items.find((item) => item.id === external)!;

@@ -35,6 +35,7 @@ import {
   type SnapshotInfo,
   type SnapshotProfile,
   type VolumeInfo,
+  listedTime,
 } from "@sandbar-sdk/adapter";
 import {
   BOXD_ENDPOINT,
@@ -996,6 +997,9 @@ export function createBoxdAdapter(
               reference: Id.safeParse(machine.id).success
                 ? { ...reference("sandbox", machine.id), ownership: "unknown" as const }
                 : null,
+              // boxd machines carry no labels.
+              labels: null,
+              createdAt: listedTime(machine.createdAt),
             })),
             nextCursor: listed.nextCursor,
           };

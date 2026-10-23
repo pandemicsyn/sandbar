@@ -90,6 +90,8 @@ const ResourceSchema = z.strictObject({
   lifetimeSeconds: z.number().int().positive().optional(),
   files: z.record(z.string(), FakeFileBytesBase64),
   sequence: z.number().int().nonnegative(),
+  /** Absent on sandboxes saved before the fake recorded creation times. */
+  createdAt: z.iso.datetime().optional(),
 });
 
 /** A built image; deleted images stay as tombstones so native IDs are never reused. */
@@ -613,6 +615,7 @@ export class FakeProviderEngine {
           labels: input.labels ?? {},
           files: {},
           sequence: 1,
+          createdAt: iso(this.state.tick),
         };
 
         if (input.env && Object.keys(input.env).length) resource.env = { ...input.env };
@@ -1097,6 +1100,8 @@ export class FakeProviderEngine {
       state: x.state,
       observedAt: iso(this.state.tick),
       sourceSequence: x.sequence,
+      labels: x.labels,
+      createdAt: x.createdAt,
     }));
 
     return {

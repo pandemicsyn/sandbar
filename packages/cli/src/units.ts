@@ -5,11 +5,12 @@ const durationUnits = new Map([
   ["s", 1],
   ["m", 60],
   ["h", 3600],
+  ["d", 86_400],
 ]);
 
-/** `90`, `90s`, `30m` or `2h` as whole seconds. */
+/** `90`, `90s`, `30m`, `2h` or `1d` as whole seconds. */
 export function parseDuration(value: string, flag: string): number {
-  const match = /^(\d+)(s|m|h)?$/.exec(value.trim());
+  const match = /^(\d+)(s|m|h|d)?$/.exec(value.trim());
   const seconds = match ? Number(match[1]) * (durationUnits.get(match[2] ?? "") ?? 1) : NaN;
 
   if (!Number.isSafeInteger(seconds) || seconds <= 0)

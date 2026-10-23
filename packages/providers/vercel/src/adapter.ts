@@ -33,6 +33,8 @@ import {
   type ProcessObservationFailure,
   Preserve,
   PreserveSchema,
+  listedLabels,
+  listedTime,
 } from "@sandbar-sdk/adapter";
 import {
   boundedBody,
@@ -554,6 +556,9 @@ export function createVercelAdapter(
                 reference: config.persistent
                   ? { ...reference(id), generation: generation(box) }
                   : reference(id),
+                // Create labels are Vercel tags beside the adapter's `sandbar` marker.
+                labels: listedLabels(box.tags, (key) => key.startsWith("sandbar")),
+                createdAt: listedTime(box.createdAt),
               };
             }),
           nextCursor: result.pagination.next ?? undefined,

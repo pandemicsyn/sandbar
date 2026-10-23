@@ -21,7 +21,12 @@ import {
 } from "./protocol";
 
 const InventoryResponse = z.strictObject({
-  items: z.array(SandboxObservation),
+  items: z.array(
+    SandboxObservation.extend({
+      labels: z.record(z.string(), z.string()).optional(),
+      createdAt: z.iso.datetime().optional(),
+    }),
+  ),
   nextCursor: FakeInventoryCursor.optional(),
 });
 

@@ -30,6 +30,7 @@ import {
   type SandboxState,
   type SnapshotInfo,
   type SnapshotProfile,
+  listedTime,
 } from "@sandbar-sdk/adapter";
 import { filesResult, parseWrapper, quote, wrapperScript, type WrapperResult } from "./exec";
 import {
@@ -1172,6 +1173,9 @@ export function createRunloopAdapter(options: RunloopAdapterOptions = {}) {
               nativeId: devbox.id,
               ownership: "unknown" as const,
             },
+            // This adapter sets no Runloop metadata from labels, so it reports none.
+            labels: null,
+            createdAt: listedTime(devbox.create_time_ms),
           })),
           nextCursor: page.hasMore ? page.items.at(-1)?.id : undefined,
         };

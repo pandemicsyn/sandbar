@@ -16,6 +16,7 @@ import {
   type SandboxResources,
   type SnapshotInfo,
   type SnapshotProfile,
+  listedLabels,
 } from "@sandbar-sdk/adapter";
 import {
   createSdkTransport,
@@ -143,6 +144,8 @@ function writeCount(bytes: Uint8Array): number | undefined {
 
 type RecordValue = z.output<typeof RecordSchema>;
 
+type ListedRecord = { id: string; state: "running" | "unknown"; labels: Record<string, string> };
+
 type PreparedCreate = {
   imageId: string;
   ociReference?: string | undefined;
@@ -241,13 +244,18 @@ export function createModalAdapter(
 
         if (!Number.isSafeInteger(offset) || offset < 0)
           throw new AdapterError("INVALID_ARGUMENT", "Invalid inventory cursor");
-        const items: { id: string; state: "running" | "unknown" }[] = [];
+        const items: ListedRecord[] = [];
         let position = 0;
 
         for await (const value of transport.list(appId)) {
           if (position++ < offset) continue;
           const record = RecordSchema.parse(value);
-          items.push({ id: record.id, state: record.running ? "running" : "unknown" });
+          items.push({
+            id: record.id,
+            state: record.running ? "running" : "unknown",
+            // Create labels are Modal tags beside the adapter's `sandbar_` markers.
+            labels: listedLabels(record.tags, (key) => key.startsWith("sandbar_")),
+          });
 
           if (items.length > input.limit) break;
         }
@@ -519,7 +527,9 @@ export function createModalAdapter(
             : null;
         },
         async inventory(input) {
-          return listPage(input);
+          const page = await listPage(input);
+
+          return { ...page, items: page.items.map(({ id, state }) => ({ id, state })) };
         },
         async sandboxList(input) {
           const page = await listPage(input);

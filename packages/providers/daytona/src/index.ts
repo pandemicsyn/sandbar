@@ -83,6 +83,7 @@ const NativeSandbox = z.object({
   toolboxProxyUrl: z.url().optional(),
   snapshot: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
+  createdAt: z.string().optional(),
   volumes: z
     .array(
       z.object({
@@ -177,6 +178,9 @@ type DaytonaListedSandbox = {
   observation: SandboxObservation;
   nativeState: string;
   creation?: { operation: string; submission: string };
+  /** Native labels, including the adapter's own markers. */
+  labels: Record<string, string>;
+  createdAt?: string;
 };
 
 type DaytonaListingPage = { items: DaytonaListedSandbox[]; nextCursor?: string };
@@ -1297,9 +1301,12 @@ export class DaytonaDriver implements ProviderDriver {
         const item: DaytonaListedSandbox = {
           observation: observed(this.scope, detail, this.config.configuration.networkPolicy),
           nativeState: detail.state,
+          labels: detail.labels,
         };
 
         if (operation && submission) item.creation = { operation, submission };
+
+        if (detail.createdAt) item.createdAt = detail.createdAt;
         result.items.push(item);
       }
     }

@@ -60,6 +60,8 @@ type MachineRecord = {
   botProtection: boolean;
   proxies: { name: string; port: number }[];
   sourceInfo?: { kind: string; name: string; version: number; id: string };
+  /** Epoch seconds; boxd reports 0 for machines without a recorded creation time. */
+  createdAt?: number;
 };
 
 type SnapshotRecord = {
@@ -340,6 +342,7 @@ export async function boxdFixture() {
               deleteAtMs: 0,
               botProtection: true,
               proxies: req.config?.network?.proxies ?? [],
+              createdAt: 1_800_000_000,
             });
 
             for (const volume of req.config?.volumes ?? []) {

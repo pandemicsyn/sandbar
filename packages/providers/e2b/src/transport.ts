@@ -160,6 +160,8 @@ export type E2BRecord = {
   templateId: string;
   metadata: Record<string, string>;
   state: string;
+  /** When the sandbox started; listings report it, detail reads may not. */
+  startedAt?: string;
   endAt?: string | null;
   domain?: string;
   allowPublicTraffic?: boolean;
@@ -969,6 +971,7 @@ export function createSdkTransport(apiKey: string, fetcher: typeof fetch = fetch
         metadata: info.metadata,
         state: info.state,
         envdVersion: info.envdVersion,
+        startedAt: info.startedAt?.toISOString(),
         endAt: info.endAt?.toISOString(),
         volumeMounts: info.volumeMounts,
       }));
