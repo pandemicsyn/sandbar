@@ -1,0 +1,32 @@
+name: Setup Sandbar
+description: Install the Sandbar CLI and provider adapters, and remove this job's sandboxes when it ends.
+author: Sandbar
+branding:
+  icon: box
+  color: blue
+inputs:
+  version:
+    description: CLI version to install, e.g. 0.7.0. Pin it so adapters and the CLI stay in step.
+    default: latest
+  adapters:
+    description: Provider ids to install, separated by spaces, commas or new lines (e.g. "e2b daytona").
+    default: ""
+  provider:
+    description: Provider to use when no profile is configured; sets SANDBAR_PROVIDER for later steps.
+    default: ""
+  state-dir:
+    description: Where the CLI records sandboxes, images and snapshots. Defaults to a folder under the job's temp directory.
+    default: ""
+  cleanup:
+    description: Remove the sandboxes this job created when the job ends, even after a failure or cancellation.
+    default: "true"
+outputs:
+  version:
+    description: The installed CLI version.
+  state-dir:
+    description: The state folder later steps use (also exported as SANDBAR_STATE_DIR).
+runs:
+  using: node24
+  main: main.mjs
+  post: post.mjs
+  post-if: always()
