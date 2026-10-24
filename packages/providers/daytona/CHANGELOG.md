@@ -1,5 +1,24 @@
 # @sandbar-sdk/daytona
 
+## 0.8.0
+
+### Minor Changes
+
+- [#148](https://github.com/pandemicsyn/sandbar/pull/148) [`29f6896`](https://github.com/pandemicsyn/sandbar/commit/29f689625b95d054f6c291cf60f34f8c97a53484) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Accept `snapshots: { preserve }` on the Daytona adapter. `Preserve.FILESYSTEM_AND_MEMORY` takes hot snapshots of running Linux VMs (`includeMemory: true`): the VM keeps running and a restored VM resumes the captured processes. Containers and stopped VMs reject before any change. Omitted or `Preserve.FILESYSTEM` keeps today's cold capture.
+
+- [#134](https://github.com/pandemicsyn/sandbar/pull/134) [`3b62728`](https://github.com/pandemicsyn/sandbar/commit/3b627282b4882893fc7d2300ebe8ac7dc1977cf3) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Daytona Linux VM sandboxes now support `snapshot()` (cold, filesystem-only capture, restored as a new Linux VM) and `suspend()`/`resume()` through native pause, which keeps files, memory and running processes. Containers are unchanged. `lifecycle.suspension.preserve: "filesystem+memory"` no longer rejects at connect: it pauses Linux VMs and rejects containers before any change, while `"filesystem"` stops Linux VMs instead of pausing them. `inspect().idleStop` reports Daytona's native Linux VM auto-pause.
+
+- [#152](https://github.com/pandemicsyn/sandbar/pull/152) [`f9a0bb7`](https://github.com/pandemicsyn/sandbar/commit/f9a0bb737f748b4114672fd070a4bf995e27248d) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandboxes.list()` items now carry `labels` (the labels set at create, without adapter markers; `null` where the provider keeps none) and `createdAt` (the provider's creation time, or `null`). Daytona, E2B, Vercel and Modal report labels; Daytona, E2B (start time), Vercel, boxd and Runloop report creation time. Adapters add them with the new `listedLabels` and `listedTime` helpers. The CLI's `ls --remote` shows both, and the new `sandbar gc --label k=v [--older-than 2h] [--dry-run]` destroys provider-listed sandboxes whose labels match, such as those a killed CI job left behind, and drops their store records. Durations also accept days, like `1d`.
+
+- [#146](https://github.com/pandemicsyn/sandbar/pull/146) [`e513d9a`](https://github.com/pandemicsyn/sandbar/commit/e513d9a81fdd57f62d85bc027e9a9db3e91b9883) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Set the sandbox lifetime the same way everywhere. Every adapter now takes `lifecycle: { lifetimeSeconds }` in setup, defaulting to 900 seconds; E2B, Vercel and Modal `timeoutSeconds`, Daytona `ttlMinutes` and boxd's top-level `lifetimeSeconds` still work but are deprecated. `create({ lifecycle: { lifetimeSeconds } })` overrides it for one sandbox, and `capabilities().lifetime` reports the accepted range. The CLI adds `create --ttl` and `run --ttl`.
+
+- [#150](https://github.com/pandemicsyn/sandbar/pull/150) [`e566711`](https://github.com/pandemicsyn/sandbar/commit/e56671186220a2c0345bdd8f9540af0de8b7d69e) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `snapshot.restore()` takes the create options `env`, `labels` and `lifecycle: { lifetimeSeconds }`. Adapters declare which they apply in `snapshotRestore.options` (shown in `capabilities().snapshots.restore`); anything else rejects before allocation. The CLI now accepts `--env`, `--label` and `--ttl` with `--snapshot`.
+
+### Patch Changes
+
+- Updated dependencies [[`29f6896`](https://github.com/pandemicsyn/sandbar/commit/29f689625b95d054f6c291cf60f34f8c97a53484), [`f9a0bb7`](https://github.com/pandemicsyn/sandbar/commit/f9a0bb737f748b4114672fd070a4bf995e27248d), [`e513d9a`](https://github.com/pandemicsyn/sandbar/commit/e513d9a81fdd57f62d85bc027e9a9db3e91b9883), [`e566711`](https://github.com/pandemicsyn/sandbar/commit/e56671186220a2c0345bdd8f9540af0de8b7d69e), [`4a074ab`](https://github.com/pandemicsyn/sandbar/commit/4a074ab86d513b4b923a387692479f9011f0ba0e)]:
+  - @sandbar-sdk/adapter@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

@@ -1,5 +1,26 @@
 # @sandbar-sdk/boxd
 
+## 0.8.0
+
+### Minor Changes
+
+- [#142](https://github.com/pandemicsyn/sandbar/pull/142) [`228abf4`](https://github.com/pandemicsyn/sandbar/commit/228abf40cdc0cc8b04ff42534fd178c38ca9bd54) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - boxd accepts `snapshots: { preserve }` and `lifecycle: { suspension: { preserve } }` in setup. boxd snapshots and pauses always keep memory, so `Preserve.FILESYSTEM_AND_MEMORY` is accepted and `Preserve.FILESYSTEM` fails with `UNSUPPORTED` at connect, before any provider call.
+
+- [#131](https://github.com/pandemicsyn/sandbar/pull/131) [`3064a65`](https://github.com/pandemicsyn/sandbar/commit/3064a65037c6616179c94ff1b2138bfbf5cfd11e) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - boxd now supports snapshots: `box.snapshot()` captures memory and disk with a brief pause while the machine keeps running, `snapshot.restore()` resumes the captured processes in a new machine, and snapshots can be inspected, listed and deleted. Each capture gets its own boxd snapshot name and the reference pins the captured version, so a snapshot saved again outside Sandbar fails with `CONFLICT` instead of restoring or deleting a different version. Machines with mounted disks cannot be captured, and restores keep the captured size and attach no disks.
+
+- [#139](https://github.com/pandemicsyn/sandbar/pull/139) [`72898a9`](https://github.com/pandemicsyn/sandbar/commit/72898a9aab15e4f9b517b60c0cef4f64dbe1eb58) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Stream command output on boxd. `box.processes.start({ output: { mode: "stream" } })` now delivers stdout and stderr as the command writes them, as text or exact bytes (`format: "bytes"`), and `box.exec(input, { onOutput })` streams while returning the usual bounded capture. `terminate()` cancels the native exec call, which kills the command's process group. Incremental stdin, terminals, other signals, status checks and process reopening are not supported.
+
+- [#152](https://github.com/pandemicsyn/sandbar/pull/152) [`f9a0bb7`](https://github.com/pandemicsyn/sandbar/commit/f9a0bb737f748b4114672fd070a4bf995e27248d) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandboxes.list()` items now carry `labels` (the labels set at create, without adapter markers; `null` where the provider keeps none) and `createdAt` (the provider's creation time, or `null`). Daytona, E2B, Vercel and Modal report labels; Daytona, E2B (start time), Vercel, boxd and Runloop report creation time. Adapters add them with the new `listedLabels` and `listedTime` helpers. The CLI's `ls --remote` shows both, and the new `sandbar gc --label k=v [--older-than 2h] [--dry-run]` destroys provider-listed sandboxes whose labels match, such as those a killed CI job left behind, and drops their store records. Durations also accept days, like `1d`.
+
+- [#146](https://github.com/pandemicsyn/sandbar/pull/146) [`e513d9a`](https://github.com/pandemicsyn/sandbar/commit/e513d9a81fdd57f62d85bc027e9a9db3e91b9883) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Set the sandbox lifetime the same way everywhere. Every adapter now takes `lifecycle: { lifetimeSeconds }` in setup, defaulting to 900 seconds; E2B, Vercel and Modal `timeoutSeconds`, Daytona `ttlMinutes` and boxd's top-level `lifetimeSeconds` still work but are deprecated. `create({ lifecycle: { lifetimeSeconds } })` overrides it for one sandbox, and `capabilities().lifetime` reports the accepted range. The CLI adds `create --ttl` and `run --ttl`.
+
+- [#150](https://github.com/pandemicsyn/sandbar/pull/150) [`e566711`](https://github.com/pandemicsyn/sandbar/commit/e56671186220a2c0345bdd8f9540af0de8b7d69e) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `snapshot.restore()` takes the create options `env`, `labels` and `lifecycle: { lifetimeSeconds }`. Adapters declare which they apply in `snapshotRestore.options` (shown in `capabilities().snapshots.restore`); anything else rejects before allocation. The CLI now accepts `--env`, `--label` and `--ttl` with `--snapshot`.
+
+### Patch Changes
+
+- Updated dependencies [[`29f6896`](https://github.com/pandemicsyn/sandbar/commit/29f689625b95d054f6c291cf60f34f8c97a53484), [`f9a0bb7`](https://github.com/pandemicsyn/sandbar/commit/f9a0bb737f748b4114672fd070a4bf995e27248d), [`e513d9a`](https://github.com/pandemicsyn/sandbar/commit/e513d9a81fdd57f62d85bc027e9a9db3e91b9883), [`e566711`](https://github.com/pandemicsyn/sandbar/commit/e56671186220a2c0345bdd8f9540af0de8b7d69e), [`4a074ab`](https://github.com/pandemicsyn/sandbar/commit/4a074ab86d513b4b923a387692479f9011f0ba0e)]:
+  - @sandbar-sdk/adapter@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

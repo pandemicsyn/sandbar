@@ -1,5 +1,32 @@
 # @sandbar-sdk/cli
 
+## 0.8.0
+
+### Minor Changes
+
+- [#135](https://github.com/pandemicsyn/sandbar/pull/135) [`16bf303`](https://github.com/pandemicsyn/sandbar/commit/16bf303807b7be07926e6c25b29386bdb86fa12a) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `sandbar adapter add`, `adapter ls` and `adapter rm` to install, list and remove the adapters the CLI loads from `~/.config/sandbar/adapters`. Official adapters are pinned to the CLI's version and every install is checked for its adapter export; reruns with nothing to change skip npm.
+
+- [#151](https://github.com/pandemicsyn/sandbar/pull/151) [`ba3630a`](https://github.com/pandemicsyn/sandbar/commit/ba3630a2c874fb341da2ba5c60c05a532bb4efe1) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `create --retry <duration>` and `run --retry <duration>`: keep retrying, with growing waits, while the provider refuses a create before any effect (rate limit, capacity, unavailable). Unknown outcomes are never retried.
+
+- [#137](https://github.com/pandemicsyn/sandbar/pull/137) [`5fe4c39`](https://github.com/pandemicsyn/sandbar/commit/5fe4c39e1c548f9dba14ce678cf30868b3d33b3f) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Copy directories with `sandbar cp -r` in both directions, and send a local working tree into a sandbox with `sandbar push <sandbox>[:/dir] [path]` or `sandbar run --push <path>`. In a git work tree, `push` sends tracked and unignored files only (`--include-ignored` sends everything); `--exclude <glob>` skips paths. Transfers move one tar archive and unpack it with one command, so they keep modes and symlinks, need `tar` in the sandbox, and work on every provider with exec and file access. Copying out never writes through symlinks or outside the destination.
+
+- [#149](https://github.com/pandemicsyn/sandbar/pull/149) [`0e6341c`](https://github.com/pandemicsyn/sandbar/commit/0e6341c38b8090f5eac62d1ac0f76b5406f7540c) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Add `sandbar snapshot create|ls|inspect|rm|forget` and `create --snapshot` / `run --snapshot` to capture a sandbox and start new sandboxes from it.
+
+- [#133](https://github.com/pandemicsyn/sandbar/pull/133) [`8e93c63`](https://github.com/pandemicsyn/sandbar/commit/8e93c63a20e0591ff668357cb4e3518a00e04dbb) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandbar exec`, `sh` and `run` now print output as it arrives on providers that stream process bytes (Daytona, E2B and Vercel). The CLI enforces `--timeout` for streaming commands and asks the provider to terminate them on timeout or Ctrl-C. Other providers, `--json` and the new `--no-stream` flag keep the buffered output.
+
+- [#152](https://github.com/pandemicsyn/sandbar/pull/152) [`f9a0bb7`](https://github.com/pandemicsyn/sandbar/commit/f9a0bb737f748b4114672fd070a4bf995e27248d) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandboxes.list()` items now carry `labels` (the labels set at create, without adapter markers; `null` where the provider keeps none) and `createdAt` (the provider's creation time, or `null`). Daytona, E2B, Vercel and Modal report labels; Daytona, E2B (start time), Vercel, boxd and Runloop report creation time. Adapters add them with the new `listedLabels` and `listedTime` helpers. The CLI's `ls --remote` shows both, and the new `sandbar gc --label k=v [--older-than 2h] [--dry-run]` destroys provider-listed sandboxes whose labels match, such as those a killed CI job left behind, and drops their store records. Durations also accept days, like `1d`.
+
+- [#146](https://github.com/pandemicsyn/sandbar/pull/146) [`e513d9a`](https://github.com/pandemicsyn/sandbar/commit/e513d9a81fdd57f62d85bc027e9a9db3e91b9883) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - Set the sandbox lifetime the same way everywhere. Every adapter now takes `lifecycle: { lifetimeSeconds }` in setup, defaulting to 900 seconds; E2B, Vercel and Modal `timeoutSeconds`, Daytona `ttlMinutes` and boxd's top-level `lifetimeSeconds` still work but are deprecated. `create({ lifecycle: { lifetimeSeconds } })` overrides it for one sandbox, and `capabilities().lifetime` reports the accepted range. The CLI adds `create --ttl` and `run --ttl`.
+
+- [#150](https://github.com/pandemicsyn/sandbar/pull/150) [`e566711`](https://github.com/pandemicsyn/sandbar/commit/e56671186220a2c0345bdd8f9540af0de8b7d69e) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `snapshot.restore()` takes the create options `env`, `labels` and `lifecycle: { lifetimeSeconds }`. Adapters declare which they apply in `snapshotRestore.options` (shown in `capabilities().snapshots.restore`); anything else rejects before allocation. The CLI now accepts `--env`, `--label` and `--ttl` with `--snapshot`.
+
+### Patch Changes
+
+- [#140](https://github.com/pandemicsyn/sandbar/pull/140) [`5c599c7`](https://github.com/pandemicsyn/sandbar/commit/5c599c7be14a7a6212aeab62a749df35ed50e6b6) Thanks [@pandemicsyn](https://github.com/pandemicsyn)! - `sandbar exec`, `sh` and `run` also stream on adapters whose processes stream text but not bytes, instead of falling back to buffered output.
+- Updated dependencies [[`29f6896`](https://github.com/pandemicsyn/sandbar/commit/29f689625b95d054f6c291cf60f34f8c97a53484), [`f9a0bb7`](https://github.com/pandemicsyn/sandbar/commit/f9a0bb737f748b4114672fd070a4bf995e27248d), [`e513d9a`](https://github.com/pandemicsyn/sandbar/commit/e513d9a81fdd57f62d85bc027e9a9db3e91b9883), [`e566711`](https://github.com/pandemicsyn/sandbar/commit/e56671186220a2c0345bdd8f9540af0de8b7d69e), [`4a074ab`](https://github.com/pandemicsyn/sandbar/commit/4a074ab86d513b4b923a387692479f9011f0ba0e)]:
+  - @sandbar-sdk/adapter@0.8.0
+  - sandbar-sdk@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
