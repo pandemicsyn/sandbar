@@ -66,7 +66,13 @@ function fixture(options: {
             options.page?.(input) ?? {
               coverage: "sandbar-managed",
               items: [
-                { id: "a", state: "running", reference: listed("a") },
+                {
+                  id: "a",
+                  state: "running",
+                  reference: listed("a"),
+                  labels: { run: "42" },
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                },
                 { id: "b", state: "suspended", reference: null },
               ],
               nextCursor: "next",
@@ -96,8 +102,15 @@ test("sandboxes.list applies the default page size and returns reopenable refere
     expect(page).toEqual({
       coverage: "sandbar-managed",
       items: [
-        { id: "a", state: "running", reference: listed("a") },
-        { id: "b", state: "suspended", reference: null },
+        {
+          id: "a",
+          state: "running",
+          reference: listed("a"),
+          labels: { run: "42" },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        // An adapter that reports neither field lists both as null.
+        { id: "b", state: "suspended", reference: null, labels: null, createdAt: null },
       ],
       nextCursor: "next",
     });
@@ -142,6 +155,10 @@ test("sandboxes.list rejects adapter pages that misstate identity, scope or boun
         { id: "b", state: "running", reference: null },
       ],
     },
+    {
+      coverage: "provider-scope",
+      items: [{ id: "a", state: "running", reference: null, createdAt: "yesterday" }],
+    },
   ];
 
   let next = 0;
@@ -154,7 +171,7 @@ test("sandboxes.list rejects adapter pages that misstate identity, scope or boun
   const client = await f.connect();
 
   try {
-    // The fourth page lists two sandboxes for a one-item request.
+    // The fourth page lists two sandboxes for a one-item request; the fifth has no ISO time.
     for (let call = 0; call <= pages.length; call++)
       await expect(client.sandboxes.list({ limit: 1 })).rejects.toMatchObject({
         code: "INVALID_RESPONSE",

@@ -55,38 +55,38 @@ Build results contain `prepared`, `retainedResources` and `reference`, an image 
 
 ## Sandboxes
 
-| API                                                                  | Behavior                                                                      |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `sandbar.sandboxes.create(input?, { signal? })`                      | Submit creation and wait for a sandbox handle.                                |
-| `sandbar.sandboxes.submitCreate(input?, options?)`                   | Submit creation and return an operation handle.                               |
-| `sandbar.sandboxes.get(reference, { signal?, pollMs? })`             | Reopen the same verified sandbox without resuming or renewing it.             |
-| `sandbar.sandboxes.list({ limit?, cursor? })`                        | Page scoped sandboxes with state, coverage and reopenable references.         |
-| `sandbar.sandboxes.checkCreate(input?)`                              | Read-only evaluation of environment and snapshot requirements.                |
-| `sandbar.capabilities()` / `box.capabilities()`                      | Observe supported profiles and current eligibility.                           |
-| `box.reference`                                                      | Verified `SandboxReference`, or `null` for adapters without identity support. |
-| `box.id`                                                             | Sandbox identifier.                                                           |
-| `box.preview(port, { signal? })`                                     | Resolve ephemeral native HTTP access; availability is not readiness.          |
-| `box.inspect({ signal? })`                                           | Read current state where supported.                                           |
-| `box.exec(input, { signal?, onOutput? })`                            | Run a command and return bounded binary output.                               |
-| `box.submitExec(input, options?)`                                    | Submit execution and return an operation handle.                              |
-| `box.readTextFile(path, { maxBytes?, signal? })`                     | Read the complete bounded file as UTF-8.                                      |
-| `box.writeTextFile(path, text, { overwrite?, maxBytes?, signal? })`  | Write UTF-8; byte limits apply; overwrite defaults to false.                  |
-| `box.readFile(path, { maxBytes?, signal? })`                         | Read bounded bytes (1 MiB default, explicit max 16 MiB).                      |
-| `box.writeFile(path, bytes, { overwrite?, maxBytes?, signal? })`     | Write bounded bytes (1 MiB default, explicit max 16 MiB).                     |
-| `box.readDirectory(path, { signal? })`                               | Bounded immediate entries, completeness and observation timestamp.            |
-| `box.listFiles(path, { signal? })`                                   | Complete bounded immediate entries, or reject.                                |
-| `box.statFile(path, { followSymlinks?, signal? })`                   | Type and available metadata; final link unfollowed by default.                |
-| `box.fileExists(path, { signal? })`                                  | False only for confirmed entry absence.                                       |
-| `box.makeDirectory(path, { recursive?, signal? })`                   | Create a directory, recursion opt-in.                                         |
-| `box.removeFile(path, { recursive?, signal? })`                      | Remove an entry; missing succeeds, recursion opt-in.                          |
-| `box.copyFile(source, destination, { overwrite?, signal? })`         | Copy regular-file bytes; no-clobber by default.                               |
-| `box.moveFile(source, destination, { overwrite?, signal? })`         | Same-filesystem native rename; no-clobber by default.                         |
-| `box.readFileStream(path, options?)`                                 | Incremental `AsyncIterable<Uint8Array>` with transfer timeouts.               |
-| `box.writeFileStream(path, chunks, options?)`                        | Incremental upload; return confirmed byte count.                              |
-| `box.walkFiles(path, { maxDepth?, maxEntries?, exclude?, signal? })` | Bounded depth-first traversal with exact subtree exclusions.                  |
-| `box.readTextLines(path, { maxLineBytes?, ...transferOptions })`     | Incremental UTF-8 lines; delimiters removed and line bytes bounded.           |
-| `box.destroy({ signal?, storage? })`                                 | Wait for confirmed compute termination.                                       |
-| `sandbar.close()`                                                    | Release client resources; does not destroy sandboxes.                         |
+| API                                                                  | Behavior                                                                          |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `sandbar.sandboxes.create(input?, { signal? })`                      | Submit creation and wait for a sandbox handle.                                    |
+| `sandbar.sandboxes.submitCreate(input?, options?)`                   | Submit creation and return an operation handle.                                   |
+| `sandbar.sandboxes.get(reference, { signal?, pollMs? })`             | Reopen the same verified sandbox without resuming or renewing it.                 |
+| `sandbar.sandboxes.list({ limit?, cursor? })`                        | Page scoped sandboxes with state, labels, creation time, coverage and references. |
+| `sandbar.sandboxes.checkCreate(input?)`                              | Read-only evaluation of environment and snapshot requirements.                    |
+| `sandbar.capabilities()` / `box.capabilities()`                      | Observe supported profiles and current eligibility.                               |
+| `box.reference`                                                      | Verified `SandboxReference`, or `null` for adapters without identity support.     |
+| `box.id`                                                             | Sandbox identifier.                                                               |
+| `box.preview(port, { signal? })`                                     | Resolve ephemeral native HTTP access; availability is not readiness.              |
+| `box.inspect({ signal? })`                                           | Read current state where supported.                                               |
+| `box.exec(input, { signal?, onOutput? })`                            | Run a command and return bounded binary output.                                   |
+| `box.submitExec(input, options?)`                                    | Submit execution and return an operation handle.                                  |
+| `box.readTextFile(path, { maxBytes?, signal? })`                     | Read the complete bounded file as UTF-8.                                          |
+| `box.writeTextFile(path, text, { overwrite?, maxBytes?, signal? })`  | Write UTF-8; byte limits apply; overwrite defaults to false.                      |
+| `box.readFile(path, { maxBytes?, signal? })`                         | Read bounded bytes (1 MiB default, explicit max 16 MiB).                          |
+| `box.writeFile(path, bytes, { overwrite?, maxBytes?, signal? })`     | Write bounded bytes (1 MiB default, explicit max 16 MiB).                         |
+| `box.readDirectory(path, { signal? })`                               | Bounded immediate entries, completeness and observation timestamp.                |
+| `box.listFiles(path, { signal? })`                                   | Complete bounded immediate entries, or reject.                                    |
+| `box.statFile(path, { followSymlinks?, signal? })`                   | Type and available metadata; final link unfollowed by default.                    |
+| `box.fileExists(path, { signal? })`                                  | False only for confirmed entry absence.                                           |
+| `box.makeDirectory(path, { recursive?, signal? })`                   | Create a directory, recursion opt-in.                                             |
+| `box.removeFile(path, { recursive?, signal? })`                      | Remove an entry; missing succeeds, recursion opt-in.                              |
+| `box.copyFile(source, destination, { overwrite?, signal? })`         | Copy regular-file bytes; no-clobber by default.                                   |
+| `box.moveFile(source, destination, { overwrite?, signal? })`         | Same-filesystem native rename; no-clobber by default.                             |
+| `box.readFileStream(path, options?)`                                 | Incremental `AsyncIterable<Uint8Array>` with transfer timeouts.                   |
+| `box.writeFileStream(path, chunks, options?)`                        | Incremental upload; return confirmed byte count.                                  |
+| `box.walkFiles(path, { maxDepth?, maxEntries?, exclude?, signal? })` | Bounded depth-first traversal with exact subtree exclusions.                      |
+| `box.readTextLines(path, { maxLineBytes?, ...transferOptions })`     | Incremental UTF-8 lines; delimiters removed and line bytes bounded.               |
+| `box.destroy({ signal?, storage? })`                                 | Wait for confirmed compute termination.                                           |
+| `sandbar.close()`                                                    | Release client resources; does not destroy sandboxes.                             |
 
 Creation input accepts `environment`, `network` (deprecated alias `networkPolicy`), `region`, `labels`, `env` (sandbox-wide variables; see [environment variables](/docs/guides/images-and-networking/#set-environment-variables)), `mounts: MountSpec[]` and `requirements: { snapshot: SnapshotRequest }`. Omitted input resolves the adapter's configured environment. Optional operations reject with `UNSUPPORTED` when their hooks or requested guarantees are absent; current access/state can instead be unavailable or unknown.
 

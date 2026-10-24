@@ -559,15 +559,50 @@ export const InventoryInput = z.strictObject({
 
 export type InventoryInput = z.infer<typeof InventoryInput>;
 
+/** Labels on a listed sandbox, with the adapter's own markers removed. */
+export const ListedLabels = z
+  .record(z.string().min(1).max(256), z.string().max(1024))
+  .refine((labels) => Object.keys(labels).length <= 64, "At most 64 listed labels");
+
+/**
+ * The user labels in a native label or tag map: drops keys the adapter reserves for its own
+ * markers, and entries outside the listing bounds, so a foreign tag never fails a whole page.
+ */
+export function listedLabels(
+  native: Record<string, string> | undefined,
+  reserved: (key: string) => boolean,
+): Record<string, string> {
+  const entries = Object.entries(native ?? {}).filter(
+    ([key, value]) =>
+      !reserved(key) && key.length >= 1 && key.length <= 256 && value.length <= 1024,
+  );
+
+  return Object.fromEntries(entries.slice(0, 64));
+}
+
+/** An ISO creation time from native milliseconds or a date, or null when it is not usable. */
+export function listedTime(value: number | string | Date | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 /**
  * One listed sandbox. `reference` is the same verified reference `reopen` accepts, or null when the
  * adapter cannot rebuild it from native evidence (for example, missing creation markers or no
  * reopen support). Never synthesize ownership, generation or creation correlation for a listing.
+ *
+ * `labels` are the user labels the provider returned (null when it records none), and `createdAt`
+ * is the provider's own creation time (null when it reports none). Both come from native evidence
+ * only; omitting them means the same as null.
  */
 export const SandboxListItem = z.strictObject({
   id: z.string().min(1).max(512),
   state: SandboxState,
   reference: ResourceReference.extend({ kind: z.literal("sandbox") }).nullable(),
+  labels: ListedLabels.nullable().optional(),
+  createdAt: z.iso.datetime().nullable().optional(),
 });
 
 export type SandboxListItem = Omit<z.infer<typeof SandboxListItem>, "reference"> & {

@@ -631,7 +631,7 @@ type RemoteListing = {
 };
 
 /** Page through the provider's sandbox listing, stopping early once `until` matches an item. */
-async function remoteSandboxes(
+export async function remoteSandboxes(
   client: SandbarClient<true>,
   until?: (item: SandboxListEntry) => boolean,
 ): Promise<RemoteListing> {
@@ -651,12 +651,19 @@ async function remoteSandboxes(
   return { items, coverage, complete: false };
 }
 
-const coverageNote = {
+export const coverageNote = {
   "provider-scope": "every sandbox this profile's account and scope can see",
   "sandbar-managed": "only sandboxes created through Sandbar in this profile's scope",
 } satisfies Record<SandboxList["coverage"], string>;
 
-function renderTable(rows: string[][]): string {
+/** Listed labels as `k=v,k2=v2`; `-` when there are none or the provider records none. */
+function formatLabels(labels: Record<string, string> | null): string {
+  const pairs = Object.entries(labels ?? {}).map(([key, value]) => `${key}=${value}`);
+
+  return pairs.length ? pairs.join(",") : "-";
+}
+
+export function renderTable(rows: string[][]): string {
   const widths = rows[0]!.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)));
 
   return rows
@@ -686,6 +693,8 @@ async function remoteLs(session: Session): Promise<number> {
     name: nameOf(item),
     reopenable: item.reference !== null,
     ownership: item.reference?.ownership ?? null,
+    labels: item.labels,
+    createdAt: item.createdAt,
     reference: item.reference,
   }));
 
@@ -704,12 +713,14 @@ async function remoteLs(session: Session): Promise<number> {
     },
     rows.length
       ? renderTable([
-          ["ID", "STATE", "NAME", "OWNERSHIP"],
+          ["ID", "STATE", "NAME", "OWNERSHIP", "CREATED", "LABELS"],
           ...rows.map((row) => [
             row.id,
             row.state,
             row.name ?? "-",
             row.ownership ?? "not reopenable",
+            row.createdAt ?? "-",
+            formatLabels(row.labels),
           ]),
         ])
       : "",
@@ -923,7 +934,7 @@ function refusal(record: SandboxRecord): CliError | null {
 }
 
 /** Whether a stored record is this listed sandbox: same provider, verified scope and identity. */
-function storesSandbox(
+export function storesSandbox(
   record: SandboxRecord,
   profile: ResolvedProfile,
   client: SandbarClient<true>,

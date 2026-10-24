@@ -29,6 +29,7 @@ import { imageCommand } from "./images";
 import { snapshotCommand } from "./snapshots";
 import { skillCommand } from "./skill";
 import { adapterCommand } from "./adapters";
+import { gcCommand } from "./gc";
 import { complete, completionCommand, formatCompletion } from "./completion";
 import type { Env } from "./config";
 
@@ -269,6 +270,36 @@ export const commands: readonly CommandSpec[] = [
     remoteExit: false,
     examples: ["sandbar rm web", "sandbar rm --all"],
     run: rmCommand,
+  },
+  {
+    name: "gc",
+    summary: "Destroy the provider's sandboxes that carry the given labels, such as a killed job's",
+    usage: "sandbar gc --label k=v... [--older-than <duration>] [--dry-run]",
+    flags: {
+      label: {
+        type: "string",
+        multiple: true,
+        value: "k=v",
+        description: "Only sandboxes with this label set at create (repeatable; all must match)",
+      },
+      "older-than": {
+        type: "string",
+        value: "duration",
+        description:
+          "Only sandboxes the provider says were created at least this long ago, e.g. 2h",
+      },
+      "dry-run": {
+        type: "boolean",
+        description: "List what would be destroyed and change nothing",
+      },
+    },
+    passthrough: false,
+    remoteExit: false,
+    examples: [
+      "sandbar gc --label run=$GITHUB_RUN_ID",
+      "sandbar gc --label ci=true --older-than 2h --dry-run",
+    ],
+    run: gcCommand,
   },
   {
     name: "exec",

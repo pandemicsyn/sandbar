@@ -147,6 +147,27 @@ sandbar rm web
 sandbar rm --all
 ```
 
+## gc
+
+Destroy the provider's sandboxes that carry the given labels, such as a killed job's.
+
+```sh
+sandbar gc --label k=v... [--older-than <duration>] [--dry-run]
+```
+
+| Flag                      | Description                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `--label <k=v>`           | Only sandboxes with this label set at create (repeatable; all must match)     |
+| `--older-than <duration>` | Only sandboxes the provider says were created at least this long ago, e.g. 2h |
+| `--dry-run`               | List what would be destroyed and change nothing                               |
+
+Examples:
+
+```sh
+sandbar gc --label run=$GITHUB_RUN_ID
+sandbar gc --label ci=true --older-than 2h --dry-run
+```
+
 ## exec
 
 Run a command in a sandbox; exits with the command's exit code.

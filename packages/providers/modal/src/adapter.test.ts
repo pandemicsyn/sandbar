@@ -1068,10 +1068,10 @@ test("Modal setup supplies a working default image and a lifetime up to 24 hours
 });
 
 test("Modal lists the verified App's sandboxes without reopenable references", async () => {
-  const records = [
+  const records: { id: string; tags: Record<string, string>; running: boolean }[] = [
     { id: "sb-1", tags: {}, running: true },
     { id: "sb-2", tags: {}, running: false },
-    { id: "sb-3", tags: { team: "other" }, running: true },
+    { id: "sb-3", tags: { team: "other", sandbar_submission: "sub" }, running: true },
   ];
 
   const calls = { lookups: 0, lists: 0, yielded: 0 };
@@ -1137,7 +1137,7 @@ test("Modal lists the verified App's sandboxes without reopenable references", a
     const first = await client.sandboxes.list({ limit: 1 });
     expect(first).toEqual({
       coverage: "provider-scope",
-      items: [{ id: "sb-1", state: "running", reference: null }],
+      items: [{ id: "sb-1", state: "running", reference: null, labels: {}, createdAt: null }],
       nextCursor: "1",
     });
     // The page stops reading after one look-ahead record and re-verifies the App once.
@@ -1147,8 +1147,15 @@ test("Modal lists the verified App's sandboxes without reopenable references", a
     expect(rest).toEqual({
       coverage: "provider-scope",
       items: [
-        { id: "sb-2", state: "unknown", reference: null },
-        { id: "sb-3", state: "running", reference: null },
+        { id: "sb-2", state: "unknown", reference: null, labels: {}, createdAt: null },
+        // Tags come back as labels without the adapter's `sandbar_` markers.
+        {
+          id: "sb-3",
+          state: "running",
+          reference: null,
+          labels: { team: "other" },
+          createdAt: null,
+        },
       ],
     });
     await expect(client.sandboxes.list({ cursor: "x" })).rejects.toMatchObject({

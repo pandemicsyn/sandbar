@@ -663,7 +663,9 @@ describe("sandbar CLI against the fake provider", () => {
 
     const human = await cli(["ls", "--remote"]);
     expect(human.code).toBe(0);
-    expect(human.stdout.split("\n")[0]).toMatch(/^ID\s+STATE\s+NAME\s+OWNERSHIP$/);
+    expect(human.stdout.split("\n")[0]).toMatch(
+      /^ID\s+STATE\s+NAME\s+OWNERSHIP\s+CREATED\s+LABELS$/,
+    );
     expect(human.stderr).toContain("fake lists every sandbox");
 
     // A destroyed listed sandbox is never recorded.
@@ -700,6 +702,68 @@ describe("sandbar CLI against the fake provider", () => {
     expect(envelope(refused)).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
     expect((await cli(["rm", "borrowed", "--force"])).code).toBe(0);
     expect(await storeNames()).toEqual([]);
+  });
+
+  test("gc destroys provider-listed sandboxes by label and age, then forgets their records", async () => {
+    const elsewhere = { SANDBAR_STATE_DIR: join(dir, "elsewhere") };
+    const create = ["create", "--prepared", "fake-starter", "--json"];
+    await cli(["create", "--name", "web", "--prepared", "fake-starter", "--label", "run=1"]);
+    // A killed job's sandbox: its own store is gone, only the provider still lists it.
+
+    const orphan = envelope(
+      await cli([...create, "--label", "run=1", "--label", "job=a"], elsewhere),
+    ).data.id;
+
+    const other = envelope(await cli([...create, "--label", "run=2"], elsewhere)).data.id;
+    const unlabelled = envelope(await cli(create, elsewhere)).data.id;
+
+    const listed = envelope(await cli(["ls", "--remote", "--json"])).data.sandboxes;
+    expect(listed.find((row: { id: string }) => row.id === orphan)).toMatchObject({
+      labels: { run: "1", job: "a" },
+      createdAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+    });
+
+    expect((await cli(["gc"])).code).toBe(2);
+    expect((await cli(["gc", "web", "--label", "run=1"])).code).toBe(2);
+    expect((await cli(["gc", "--label", "run=1", "--older-than", "soon"])).code).toBe(2);
+
+    const dry = envelope(await cli(["gc", "--label", "run=1", "--dry-run", "--json"]));
+    expect(dry.data).toMatchObject({ provider: "fake", complete: true, dryRun: true, skipped: [] });
+    expect(
+      dry.data.removed.map((row: { name: string; result: string }) => [row.name, row.result]),
+    ).toEqual([
+      ["web", "would-destroy"],
+      [orphan, "would-destroy"],
+    ]);
+    expect((await fakeResources()).every((resource) => resource.state === "running")).toBe(true);
+
+    // The fake records creation in early 2026, so a ten-year cutoff leaves everything alone.
+    const young = envelope(
+      await cli(["gc", "--label", "run=1", "--older-than", "3650d", "--json"]),
+    );
+
+    expect(young.data.removed).toEqual([]);
+
+    // Every given label must match.
+    const narrow = envelope(await cli(["gc", "--label", "run=1", "--label", "job=a", "--json"]));
+    expect(narrow.data.removed).toMatchObject([{ name: orphan, id: orphan, result: "destroyed" }]);
+
+    const human = await cli(["gc", "--label", "run=1", "--older-than", "1h"]);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toMatch(/^NAME\s+RESULT\s+CREATED\nweb\s+destroyed\s/);
+    expect(await storeNames()).toEqual([]);
+
+    const states = Object.fromEntries(
+      (await fakeResources()).map((resource) => [resource.ref.nativeId, resource.state]),
+    );
+
+    expect(states[orphan]).toBe("destroyed");
+    expect(states[other]).toBe("running");
+    expect(states[unlabelled]).toBe("running");
+
+    const none = await cli(["gc", "--label", "run=1"]);
+    expect(none.code).toBe(0);
+    expect(none.stderr).toContain("no sandboxes matched");
   });
 
   test("ls --remote and adopt match stored sandboxes by scope, not native id alone", async () => {

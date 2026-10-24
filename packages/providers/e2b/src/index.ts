@@ -11,6 +11,8 @@ import {
   PreviewPort,
   ResolvedRenewInput,
   sandboxReference,
+  listedLabels,
+  listedTime,
   assertSandboxReference,
   assertResourceScope,
   defaultLifetime,
@@ -1876,6 +1878,9 @@ export function createE2BAdapter(transportFactory?: (options: { apiKey: string }
                 operation: record.metadata.sandbar_operation!,
                 submission: record.metadata.sandbar_submission!,
               }),
+              // Create labels are E2B metadata beside the adapter's `sandbar_` markers.
+              labels: listedLabels(record.metadata, (key) => key.startsWith("sandbar_")),
+              createdAt: listedTime(record.startedAt),
             })),
             nextCursor: page.nextToken,
           };

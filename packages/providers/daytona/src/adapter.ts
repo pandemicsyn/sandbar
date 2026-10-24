@@ -10,6 +10,8 @@ import {
   PreviewResult,
   ResolvedRenewInput,
   sandboxReference,
+  listedLabels,
+  listedTime,
   assertSandboxReference,
   assertResourceScope,
   unknownSandboxFacts,
@@ -299,6 +301,9 @@ const states = new Map<string, import("@sandbar-sdk/adapter").SandboxState>([
   ["destroying", "destroying"],
   ["destroyed", "destroyed"],
 ]);
+
+/** Labels the adapter writes on every sandbox it creates; listings leave them out. */
+const MARKER_LABELS = new Set(["sandbar.submission", "sandbar.operation", "sandbar.imageSnapshot"]);
 
 // Retained labels are summaries; mountDurability preserves the full scoped native identity.
 function retainedVolumeLabel(nativeId: string): string {
@@ -2159,6 +2164,8 @@ export function createDaytonaAdapter(
                     item.creation,
                   )
                 : null,
+              labels: listedLabels(item.labels, (key) => MARKER_LABELS.has(key)),
+              createdAt: listedTime(item.createdAt),
             })),
             nextCursor: page.nextCursor,
           };

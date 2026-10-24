@@ -59,7 +59,20 @@ To keep provider settings in one place instead of environment variables, see [Co
 
 `sandbar ls` shows every sandbox the CLI knows about with its live state (`running`, `gone`, `unreachable` and so on). `sandbar ls --offline` skips the provider calls.
 
-`sandbar ls --remote` asks the selected profile's provider instead, so it also shows sandboxes created elsewhere. It prints whether the provider listed every sandbox in the account scope or only ones created through Sandbar. The `NAME` column shows the store name for sandboxes the CLI already knows. To work with a listed sandbox by name, record it with `sandbar adopt <id> --name <name>`; adopt reopens it first and fails if the provider cannot give a verifiable reference. The CLI did not create adopted sandboxes, so `rm --all` skips them and `rm <name>` needs `--force`.
+`sandbar ls --remote` asks the selected profile's provider instead, so it also shows sandboxes created elsewhere. It prints whether the provider listed every sandbox in the account scope or only ones created through Sandbar. The `NAME` column shows the store name for sandboxes the CLI already knows. To work with a listed sandbox by name, record it with `sandbar adopt <id> --name <name>`; adopt reopens it first and fails if the provider cannot give a verifiable reference. The CLI did not create adopted sandboxes, so `rm --all` skips them and `rm <name>` needs `--force`. The listing also shows each sandbox's creation time and labels where the provider reports them.
+
+## Cleaning up after killed jobs
+
+A job that is killed or cancelled can leave its sandbox running, and its store may be gone with the runner. Label every sandbox a job creates, then collect by label from the provider's own listing:
+
+```sh
+sandbar create --name ci --label run=$GITHUB_RUN_ID --ttl 1h
+# later, from any machine with the same profile
+sandbar gc --label run=$GITHUB_RUN_ID
+sandbar gc --label ci=true --older-than 2h --dry-run
+```
+
+`gc` destroys every listed sandbox whose labels match all the `--label` pairs, and drops any store record for it. `--older-than` keeps sandboxes the provider says are younger than that, and skips ones without a reported creation time. `--dry-run` shows what would go. At least one `--label` is required, so `gc` never sweeps an account by age alone. Sandboxes the provider lists without a reopenable reference (Modal) and sandboxes adopted into the store are skipped and reported. boxd, Runloop and Boat keep no labels, so `gc` finds nothing there. On every provider, `--ttl` stays the backstop: the provider removes a sandbox when its lifetime ends even if nothing runs `gc`.
 
 ## Commands and arguments
 

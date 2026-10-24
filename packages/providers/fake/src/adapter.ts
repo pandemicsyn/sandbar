@@ -811,6 +811,8 @@ export function createFakeAdapter(options: {
                 nativeId: item.ref.nativeId,
                 ownership: "unknown" as const,
               },
+              labels: item.labels ?? null,
+              createdAt: item.createdAt ?? null,
             })),
             nextCursor: page.nextCursor,
           };

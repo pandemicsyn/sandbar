@@ -117,3 +117,21 @@ test("E2B lists only this binding's Sandbar-created sandboxes and reopens them",
     await client.close();
   }
 });
+
+test("E2B lists create labels without its own markers, and the start time", async () => {
+  const labelled = owned("labelled");
+  labelled.metadata.run = "42";
+  labelled.startedAt = "2026-10-23T10:00:00.000Z";
+  const f = fixture([labelled, owned("plain")]);
+  const client = await f.connect();
+
+  try {
+    const page = await client.sandboxes.list();
+    expect(page.items.map(({ id, labels, createdAt }) => ({ id, labels, createdAt }))).toEqual([
+      { id: "labelled", labels: { run: "42" }, createdAt: "2026-10-23T10:00:00.000Z" },
+      { id: "plain", labels: {}, createdAt: null },
+    ]);
+  } finally {
+    await client.close();
+  }
+});
