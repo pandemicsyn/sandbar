@@ -27,7 +27,7 @@ jobs:
       - run: >
           sandbar run --push . --network internet
           --timeout 15m --ttl 30m --retry 5m
-          --label ci-run=${{ github.run_id }}
+          --label ci=${{ github.repository_owner }}
           -- sh -c 'npm ci && npm test'
 ```
 
@@ -56,7 +56,7 @@ Pin the action itself to a release tag or a commit SHA for reproducible builds, 
 When you want results back, such as JUnit reports or coverage, split the job into steps. Steps share the runner's state folder, so later steps reach the sandbox by name:
 
 ```yaml
-- run: sandbar create --name job --network internet --ttl 45m --retry 5m --label ci-run=${{ github.run_id }}
+- run: sandbar create --name job --network internet --ttl 45m --retry 5m --label ci=${{ github.repository_owner }}
 - run: echo "WORK=$(sandbar push job)" >> "$GITHUB_ENV"
 - run: sandbar exec job --cwd "$WORK" --timeout 30m -- sh -c 'npm ci && npm test -- --reporter=junit --outputFile=junit.xml'
 - if: always()
@@ -111,6 +111,28 @@ Save the printed id as a repository variable and start jobs with `sandbar run --
 - Set the job's `timeout-minutes` above both, so GitHub doesn't cancel a job that would have finished.
 
 When GitHub cancels a job, `run` destroys its sandbox before exiting, and the setup action's cleanup step removes any others.
+
+## Runners that die
+
+If a runner dies mid-job, neither `run` nor the cleanup step gets to run, and the job's store goes with the runner. The examples above label every sandbox, so a scheduled workflow can collect what's left from the provider's own listing:
+
+```yaml
+on:
+  schedule: [{ cron: "0 * * * *" }]
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    env:
+      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+    steps:
+      - uses: pandemicsyn/sandbar/actions/setup-sandbar@main
+        with:
+          adapters: e2b
+          provider: e2b
+      - run: sandbar gc --label ci=${{ github.repository_owner }} --older-than 2h
+```
+
+Set `--older-than` above your longest job so the sweep never removes a sandbox a running job still uses. See [Cleaning up after killed jobs](/docs/cli/#cleaning-up-after-killed-jobs) for what `gc` matches and skips per provider. On every provider, `--ttl` remains the backstop.
 
 ## Many jobs at once
 
