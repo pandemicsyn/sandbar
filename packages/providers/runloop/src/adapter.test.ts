@@ -711,6 +711,11 @@ test("inventory and listing are account-scoped; another account cannot reopen a 
     const page = await main.sandboxes.list();
     expect(page.items.map((item) => item.id)).toEqual([mine.id]);
     expect(page.items[0]?.reference?.ownership).toBe("unknown");
+    // Runloop keeps no Sandbar labels; the creation time is native.
+    expect(page.items[0]).toMatchObject({
+      labels: null,
+      createdAt: new Date(1_800_000_000_000).toISOString(),
+    });
 
     if (!mine.reference) throw Error("Created sandbox has no reference");
     await expect(alt.sandboxes.get(mine.reference)).rejects.toMatchObject({ code: "CONFLICT" });

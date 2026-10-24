@@ -9,6 +9,7 @@ type NativeFixture = {
   target: string;
   state: string;
   labels?: Record<string, string>;
+  createdAt?: string;
   networkBlockAll: boolean;
   public: boolean;
   autoDestroyAt?: string;
@@ -158,6 +159,33 @@ test("Daytona lists a sandbox whose list item has no state, using the detail rea
   try {
     const page = await client.sandboxes.list({ limit: 10 });
     expect(page.items).toEqual([expect.objectContaining({ id: "labelled", state: "running" })]);
+  } finally {
+    await client.close();
+  }
+});
+
+test("Daytona lists create labels without its own markers, and the creation time", async () => {
+  const f = fixture([
+    native("labelled", {
+      labels: {
+        "sandbar.submission": "sub-labelled",
+        "sandbar.operation": "op_labelled",
+        "sandbar.imageSnapshot": "snap",
+        run: "42",
+      },
+      createdAt: "2026-10-23T10:00:00.000Z",
+    }),
+    native("plain"),
+  ]);
+
+  const client = await f.connect();
+
+  try {
+    const page = await client.sandboxes.list({ limit: 10 });
+    expect(page.items.map(({ id, labels, createdAt }) => ({ id, labels, createdAt }))).toEqual([
+      { id: "labelled", labels: { run: "42" }, createdAt: "2026-10-23T10:00:00.000Z" },
+      { id: "plain", labels: {}, createdAt: null },
+    ]);
   } finally {
     await client.close();
   }

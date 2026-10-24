@@ -1781,6 +1781,9 @@ test("session-mode listing pages project sessions with references that reopen", 
         id: boxes[0]!.id,
         state: "running",
         reference: expect.objectContaining({ nativeId: boxes[0]!.id, ownership: "unknown" }),
+        // This fixture's session-mode listing carries no tags or creation time.
+        labels: {},
+        createdAt: null,
       },
     ]);
     expect(first.items[0]!.reference?.generation).toBeUndefined();
@@ -1812,7 +1815,7 @@ test("persistent listing carries native generation evidence and no creation rece
   const client = await Sandbar.connect(options);
 
   try {
-    const box = await client.sandboxes.create();
+    const box = await client.sandboxes.create({ labels: { run: "42" } });
     native.logical.set("untagged", {
       ...native.logical.get(box.id)!,
       name: "untagged",
@@ -1822,6 +1825,11 @@ test("persistent listing carries native generation evidence and no creation rece
     const page = await client.sandboxes.list();
     expect(page.coverage).toBe("sandbar-managed");
     expect(page.items.map((item) => item.id)).toEqual([box.id]);
+    // Create labels come back from the tags without the adapter's own marker.
+    expect(page.items[0]!.labels).toEqual({ run: "42" });
+    expect(page.items[0]!.createdAt).toBe(
+      new Date(native.logical.get(box.id)!.createdAt!).toISOString(),
+    );
 
     const listed = page.items[0]!.reference!;
     expect(listed.generation).toBe(box.reference!.generation);

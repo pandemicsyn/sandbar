@@ -104,7 +104,7 @@ Inspection reports state, provider state, observation time, expiry, idle-stop po
 
 ### List sandboxes
 
-`sandboxes.list()` returns one page of sandboxes in the connection's scope. Each item has an `id`, a `state` and a `reference` that `sandboxes.get()` accepts:
+`sandboxes.list()` returns one page of sandboxes in the connection's scope. Each item has an `id`, a `state`, a `reference` that `sandboxes.get()` accepts, the `labels` set at create and the provider's `createdAt` time:
 
 ```ts
 let cursor: string | undefined;
@@ -124,13 +124,16 @@ Pass the returned `nextCursor` to read the next page; it is absent on the last p
 
 `reference` is `null` when the adapter cannot rebuild a verified identity for that sandbox, for example when creation markers are missing or the adapter cannot reopen sandboxes. The sandbox is still listed. Listed references never claim more than the provider shows: `ownership` is `"verified-created"` only when native creation markers prove that Sandbar created it, and is otherwise `"unknown"`. A listing does not prove that your application created a sandbox, so do not use it alone to decide what to clean up. Destroyed sandboxes can still appear with `state: "destroyed"`; `get()` reports `NOT_FOUND` for them.
 
-| Adapter                                                  | Coverage                                                  | Listed references                                                                                                        |
-| -------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [Daytona](/docs/providers/daytona/)                      | `sandbar-managed` (organization and target)               | `verified-created` from Sandbar labels; `null` when a creation label is missing. One detail read per labelled candidate. |
-| [E2B](/docs/providers/e2b/)                              | `sandbar-managed` (team or API key, and template)         | `verified-created` from Sandbar metadata. Paused sandboxes list as `suspended`.                                          |
-| [boxd (experimental)](/docs/providers/boxd/)             | `provider-scope` (verified org)                           | `unknown` ownership; `null` for machines without a UUID.                                                                 |
-| [Vercel Sandbox (experimental)](/docs/providers/vercel/) | Sessions: `provider-scope`; persistent: `sandbar-managed` | `unknown` ownership with no creation receipt. Persistent references keep the native generation used to reopen by name.   |
-| Modal (experimental)                                     | `provider-scope` (verified App)                           | Always `null`: the Modal adapter cannot reopen sandboxes.                                                                |
+`labels` holds the labels you passed to `create()` or `restore()`, without the adapter's own markers. It is `null` on providers that keep no labels. `createdAt` is an ISO time the provider reported, or `null` when it reports none. Labels you set per job, such as `{ run: "42" }`, are the reliable way to find a crashed job's sandboxes later; the CLI's [`sandbar gc`](/docs/cli/#cleaning-up-after-killed-jobs) does exactly that.
+
+| Adapter                                                  | Coverage                                                  | Listed references                                                                                                        | Labels and `createdAt`                      |
+| -------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| [Daytona](/docs/providers/daytona/)                      | `sandbar-managed` (organization and target)               | `verified-created` from Sandbar labels; `null` when a creation label is missing. One detail read per labelled candidate. | Labels; creation time.                      |
+| [E2B](/docs/providers/e2b/)                              | `sandbar-managed` (team or API key, and template)         | `verified-created` from Sandbar metadata. Paused sandboxes list as `suspended`.                                          | Labels; start time.                         |
+| [boxd (experimental)](/docs/providers/boxd/)             | `provider-scope` (verified org)                           | `unknown` ownership; `null` for machines without a UUID.                                                                 | No labels (`null`); creation time.          |
+| [Vercel Sandbox (experimental)](/docs/providers/vercel/) | Sessions: `provider-scope`; persistent: `sandbar-managed` | `unknown` ownership with no creation receipt. Persistent references keep the native generation used to reopen by name.   | Labels; creation time of the named sandbox. |
+| [Runloop (experimental)](/docs/providers/runloop/)       | `provider-scope` (verified account)                       | `unknown` ownership.                                                                                                     | No labels (`null`); creation time.          |
+| Modal (experimental)                                     | `provider-scope` (verified App)                           | Always `null`: the Modal adapter cannot reopen sandboxes.                                                                | Labels; no creation time (`null`).          |
 
 `operations.inventory()` remains available and returns only `id` and `state`.
 

@@ -604,11 +604,17 @@ const PageInput = InventoryInput.extend({
 /** Optional page selection for `list()` calls; `limit` is 1-100 and defaults to 50. */
 export type SandboxListInput = { cursor?: string; limit?: number };
 
-/** One listed sandbox; `reference` is null when the adapter cannot verify a reopenable identity. */
+/**
+ * One listed sandbox; `reference` is null when the adapter cannot verify a reopenable identity.
+ * `labels` holds the labels set at create (null when the provider records none) and `createdAt`
+ * the provider's creation time (null when it reports none).
+ */
 export type SandboxListEntry = {
   id: string;
   state: import("@sandbar-sdk/adapter").SandboxState;
   reference: import("@sandbar-sdk/adapter").SandboxReference | null;
+  labels: Record<string, string> | null;
+  createdAt: string | null;
 };
 
 /** A bounded page of sandboxes and whether it covers the provider scope or only Sandbar-created ones. */
@@ -673,7 +679,14 @@ export async function listSandboxes(
     }
   }
 
-  return structuredClone(parsed.data);
+  return {
+    ...structuredClone(parsed.data),
+    items: parsed.data.items.map((item) => ({
+      ...structuredClone(item),
+      labels: item.labels ? { ...item.labels } : null,
+      createdAt: item.createdAt ?? null,
+    })),
+  };
 }
 
 export function decodeCapture(
