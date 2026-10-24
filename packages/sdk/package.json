@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@sandbar-sdk/adapter": "workspace:*",
-    "zod": "4.6.5",
+    "zod": "4.6.6",
     "@opentelemetry/api": "1.9.1"
   },
   "devDependencies": {
