@@ -1,6 +1,6 @@
 {
   "name": "@sandbar-sdk/e2b",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": false,
   "type": "module",
   "files": [
