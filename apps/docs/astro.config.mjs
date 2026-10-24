@@ -90,6 +90,7 @@ export default defineConfig({
             { slug: "docs/cli", label: "Overview" },
             { slug: "docs/cli/configuration" },
             { slug: "docs/cli/shell-and-agents" },
+            { slug: "docs/cli/ci" },
             { slug: "docs/cli/reference" },
           ],
         },

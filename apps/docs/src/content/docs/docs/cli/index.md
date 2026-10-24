@@ -51,7 +51,7 @@ For one command in a throwaway sandbox, `run` creates it, runs the command and a
 sandbar run -- python3 -c 'print(2 + 2)'
 ```
 
-To keep provider settings in one place instead of environment variables, see [Configuration](/docs/cli/configuration/).
+To keep provider settings in one place instead of environment variables, see [Configuration](/docs/cli/configuration/). To run CI jobs in sandboxes, see [Run CI jobs](/docs/cli/ci/).
 
 ## Naming sandboxes
 

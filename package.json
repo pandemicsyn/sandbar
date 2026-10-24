@@ -33,7 +33,7 @@
     "docs:check:built": "bun run --cwd apps/docs check && bun run --cwd apps/docs build && bun run --cwd apps/docs examples:test",
     "package:smoke:built": "bun packages/sdk-qualification/package-smoke.mjs",
     "build:built": "bun run --cwd apps/docs build",
-    "test:sdk:built": "bun test packages/adapter packages/provider-spi packages/providers packages/sdk packages/sdk-qualification packages/cli tools examples"
+    "test:sdk:built": "bun test packages/adapter packages/provider-spi packages/providers packages/sdk packages/sdk-qualification packages/cli tools examples actions"
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.0",

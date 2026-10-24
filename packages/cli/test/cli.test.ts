@@ -380,6 +380,60 @@ describe("sandbar CLI against the fake provider", () => {
     expect(await storeNames()).toEqual([]);
   });
 
+  test("--retry waits out a refusal before any effect, then creates", async () => {
+    await control("/_test/seed", { submissionId: "*", action: "create", behavior: "reject" });
+
+    const result = await cli([
+      "create",
+      "--name",
+      "web",
+      "--prepared",
+      "fake-starter",
+      "--retry",
+      "1m",
+      "--json",
+    ]);
+
+    expect(result.code).toBe(0);
+    expect(envelope(result).data).toMatchObject({ name: "web", status: "created" });
+    expect(result.stderr).toContain("create refused (CAPACITY");
+    expect(await fakeResources()).toHaveLength(1);
+  });
+
+  test("--retry gives up with exit 7 once the next wait would pass its limit", async () => {
+    for (let index = 0; index < 2; index++)
+      await control("/_test/seed", { submissionId: "*", action: "create", behavior: "reject" });
+
+    const result = await cli(["create", "--prepared", "fake-starter", "--retry", "1s", "--json"]);
+
+    expect(result.code).toBe(7);
+    expect(envelope(result).error).toMatchObject({ code: "CAPACITY", outcome: "rejected" });
+    expect(await fakeResources()).toHaveLength(0);
+    expect(await storeNames()).toEqual([]);
+  });
+
+  test("--retry never repeats a create whose outcome is unknown", async () => {
+    await control("/_test/seed", {
+      submissionId: "*",
+      action: "create",
+      behavior: "ambiguous_before_effect",
+    });
+
+    const result = await cli([
+      "create",
+      "--name",
+      "web",
+      "--prepared",
+      "fake-starter",
+      "--retry",
+      "1m",
+      "--json",
+    ]);
+
+    expect(result.code).toBe(6);
+    expect(result.stderr).not.toContain("retrying");
+  });
+
   test("an uncertain create keeps the record and exits 6", async () => {
     await control("/_test/seed", {
       submissionId: "*",
