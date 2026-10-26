@@ -1,0 +1,163 @@
+# A real CI job on real providers, started by hand: it runs this repository's own lint, build and
+# CLI tests inside a sandbox, the way the "Run CI jobs" guide describes. It creates paid sandboxes
+# and keeps one base snapshot per provider, so it never runs on push or pull requests.
+name: Live CI
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to run on
+        type: choice
+        options: [both, daytona, e2b]
+        default: both
+      cli-version:
+        description: Released CLI version to use through setup-sandbar; empty builds the CLI and adapters from this commit
+        type: string
+        default: ""
+      warm-base:
+        description: Start from a cached base snapshot with dependencies installed
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: live-ci-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  live:
+    name: live (${{ matrix.provider }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJSON(inputs.provider == 'both' && '["daytona","e2b"]' || format('["{0}"]', inputs.provider)) }}
+    env:
+      # Job-level, so every step and the setup action's cleanup can reach the provider.
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET || 'us' }}
+      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+      PROVIDER: ${{ matrix.provider }}
+      FROM_CHECKOUT: ${{ inputs.cli-version == '' }}
+      # Every sandbox carries both labels: one for this attempt's leak check, one for sweeps.
+      RUN_LABEL: sandbar-live-ci=${{ github.run_id }}-${{ github.run_attempt }}
+      SWEEP_LABEL: ci=sandbar-live
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Either build the CLI and adapter from this commit...
+      - name: Build the CLI and adapter from this commit
+        if: env.FROM_CHECKOUT == 'true'
+        run: |
+          set -eu
+          bun install --frozen-lockfile
+          bun run build:packages
+          config="$RUNNER_TEMP/sandbar-config"
+          bin=$(sh .github/live-ci/install-from-checkout.sh "$PROVIDER" "$RUNNER_TEMP/sandbar-cli" "$config/sandbar/adapters")
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "XDG_CONFIG_HOME=$config" >> "$GITHUB_ENV"
+          echo "SANDBAR_STATE_DIR=$RUNNER_TEMP/sandbar/state" >> "$GITHUB_ENV"
+          # The adapter is already installed; this checks it loads and matches the CLI.
+          PATH="$bin:$PATH" XDG_CONFIG_HOME="$config" sandbar adapter add "$PROVIDER"
+
+      # ...or install a released one exactly as users do.
+      - name: Set up a released CLI
+        if: env.FROM_CHECKOUT != 'true'
+        uses: ./actions/setup-sandbar
+        with:
+          version: ${{ inputs.cli-version }}
+          adapters: ${{ matrix.provider }}
+
+      - name: Write the job's profile
+        run: |
+          set -eu
+          config="$RUNNER_TEMP/sandbar.json"
+          if [ "$PROVIDER" = daytona ]; then
+            # Daytona's default size is too small to build this monorepo.
+            extra='"config": { "resources": { "vcpus": 2, "memoryMiB": 4096 } }'
+          else
+            extra='"config": {}'
+          fi
+          printf '{ "default": "live", "profiles": { "live": { "provider": "%s", %s } } }\n' \
+            "$PROVIDER" "$extra" > "$config"
+          echo "SANDBAR_CONFIG=$config" >> "$GITHUB_ENV"
+
+      - name: Check credentials and adapter
+        run: |
+          sandbar --version
+          sandbar doctor
+
+      - name: Restore the base snapshot record
+        if: inputs.warm-base
+        id: base
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sandbar/state/snapshots
+          key: sandbar-live-base-${{ matrix.provider }}-${{ hashFiles('bun.lock', '.github/live-ci/prepare.sh') }}
+          restore-keys: sandbar-live-base-${{ matrix.provider }}-
+
+      - name: Build the base snapshot
+        if: inputs.warm-base && steps.base.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          sandbar create --name base --network internet --ttl 30m --retry 5m \
+            --label "$RUN_LABEL" --label "$SWEEP_LABEL"
+          work=$(sandbar push base)
+          sandbar exec base --cwd "$work" --timeout 15m -- sh .github/live-ci/prepare.sh
+          sandbar snapshot create base --name live-base --replace
+          sandbar rm base
+
+      - name: Create the job sandbox
+        run: |
+          set -eu
+          from=""
+          if [ "${{ inputs.warm-base }}" = true ]; then from="--snapshot live-base"; fi
+          sandbar create --name job $from --network internet --ttl 45m --retry 5m \
+            --label "$RUN_LABEL" --label "$SWEEP_LABEL"
+          echo "WORK=$(sandbar push job)" >> "$GITHUB_ENV"
+
+      - name: Exit codes pass through
+        run: |
+          set +e
+          sandbar exec job -- sh -c 'exit 3'
+          code=$?
+          set -e
+          test "$code" -eq 3 || { echo "::error::exec exited $code, expected 3"; exit 1; }
+
+      - name: Lint, build and test in the sandbox
+        run: sandbar exec job --cwd "$WORK" --timeout 25m -- sh .github/live-ci/test.sh
+
+      - name: Copy test results back
+        if: always() && env.WORK != ''
+        run: sandbar cp job:"$WORK"/junit.xml junit.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.provider }}
+          path: junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # A released CLI's setup action removes the job's sandboxes in its post step; the checkout
+      # build has no action, so it cleans up the same way here.
+      - name: Remove this job's sandboxes
+        if: always() && env.FROM_CHECKOUT == 'true'
+        run: sandbar rm --all
+
+      - name: Check nothing leaked
+        if: always() && env.FROM_CHECKOUT == 'true'
+        run: |
+          set -eu
+          result=$(sandbar gc --label "$RUN_LABEL" --json)
+          echo "$result"
+          left=$(echo "$result" | jq '.data.removed | length')
+          if [ "$left" -ne 0 ]; then
+            echo "::warning::gc found $left sandbox(es) from this run still on $PROVIDER and removed them"
+          fi
