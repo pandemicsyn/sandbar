@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "bun --env-file=.env.local agent-hello-world/main.ts",
     "edit": "bun --env-file=.env.local agent-edit-file/main.ts",
+    "box": "bun --env-file=.env.local opencode-box/main.ts",
     "check": "tsc -p tsconfig.json",
     "test": "bun test"
   },

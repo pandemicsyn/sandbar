@@ -1,11 +1,12 @@
 # Run OpenCode with Sandbar
 
-Two small TypeScript applications run OpenCode inside a disposable Daytona or E2B sandbox:
+Three small TypeScript applications run OpenCode in a Daytona or E2B sandbox:
 
 - `hello` asks **“What is 2 + 2?”** and prints captured stdout/stderr. It does not create an answer file.
 - `edit` uploads [message.txt](agent-edit-file/message.txt), asks OpenCode to replace `NAME` with `Sandbar`, then reads and displays the changed remote file. The local fixture stays unchanged.
+- `box` runs an OpenCode 2 server next to your project in a sandbox and attaches your local OpenCode to it; see [OpenCode 2 in a box](#opencode-2-in-a-box).
 
-Both use Sandbar's public SDK. Provider selection changes setup; the workflows use the same execution and file calls.
+All three use Sandbar's public SDK. Provider selection changes setup; the workflows use the same execution and file calls.
 
 ## Setup
 
@@ -81,6 +82,39 @@ Live acceptance passed on October 10, 2026 at source revision `1446cf0a013a6a2b4
 | E2B | Existing `base` template, `internet` network | Answer contained `4`; remote file was exactly `Hello, Sandbar!\n`. |
 
 The live harness imported the actual `hello`, `edit`, installation, provider setup and cleanup functions and ran both workflows sequentially in one owned sandbox per provider. It did not rerun all four standalone CLI invocations above. Initial attempts using npm failed because Daytona lacked npm and E2B's npm install exited 137; the corrected standalone installer passed. All four allocated sandboxes, including those initial attempts, were independently confirmed deleted by provider GET responses returning 404. These results qualify these workflows and configurations at that revision. Offline fixtures cover SDK wiring and failure cleanup; future live sandbox runs require separate authorization.
+
+## OpenCode 2 in a box
+
+`box` puts your project and an OpenCode 2 server in one sandbox, then attaches your local OpenCode 2 client to it. The agent's commands and edits run in the sandbox; you drive it from your own terminal. Pull the work back when you are done.
+
+```sh
+bun run --cwd examples box up --provider e2b --project ~/code/my-app
+bun run --cwd examples box attach
+bun run --cwd examples box pull
+bun run --cwd examples box down
+```
+
+`--project` takes any directory in a git checkout; relative paths resolve from `examples/`, so prefer an absolute path. Pass `--name <name>` to run several boxes, and `--hours <n>` to `up` for a lifetime other than one hour (24 at most).
+
+**Up** creates the sandbox and downloads **OpenCode `2.2.3`** for Linux straight from the npm registry tarball, checking its pinned SHA-256 digest (no Node or npm in the guest). It uploads your project's tracked files, untracked files that are not ignored, and `.git` to the same absolute path in the sandbox, so the local client and the server agree on the directory. It copies your git `user.name` and `user.email`, starts `opencode2 serve` on port 4096 with a random password, and waits for `/global/health` through the provider's preview URL. The sandbox reference and password are saved under `~/.local/state/sandbar-opencode-box/`, readable only by you.
+
+**Attach** reopens the sandbox and runs your local `opencode2 --server` against a localhost proxy. The proxy adds the provider's preview headers (Daytona's preview token), which the OpenCode client cannot send itself, and refuses redirects so those headers cannot leak. Install the client with `npm install -g @opencode/cli`.
+
+**Pull** copies the project back over your checkout, `.git` included, so commits the agent made appear in your local `git log`. Files the agent deleted stay on your side. It refuses to run while your checkout has uncommitted changes; pass `--force` to overwrite them anyway. **Down** destroys the sandbox and forgets it.
+
+### Git and GitHub
+
+Set `GH_TOKEN` in `examples/.env.local` to let the agent fetch, rebase and push to GitHub from the sandbox. `up` passes it as sandbox environment and configures git to use it for `https://github.com`. Use a fine-grained token limited to the repository: every command in the sandbox, the agent's included, can read it. `gh pr create` and other `gh` commands also need `gh` in the image (an E2B template or Daytona snapshot with it installed); without it, plain `git push` still works.
+
+### Models
+
+The server uses `OPENCODE_MODEL` when set, otherwise OpenCode's default. A keyed model works as above: `OPENCODE_API_KEY_ENV` names the one key that reaches the sandbox, where the agent can read it.
+
+### Requirements and limits
+
+The guest needs Linux on x64 or arm64 with `curl`, `sha256sum`, GNU `tar`, `git`, `setsid` and `/bin/sh`, outbound access to `registry.npmjs.org` and your model service, and `sudo` when the project path does not exist and the sandbox user cannot create it. The host needs `git` and `tar`. The box keeps running until `down` or its lifetime ends, and is billed meanwhile; sandboxes carry the labels `sandbar-example=opencode-box` and `opencode-box=<name>`, so `sandbar gc --label sandbar-example=opencode-box` finds strays.
+
+`box` has offline tests only. It has not been run against a live provider yet.
 
 For offline checks after package builds:
 
