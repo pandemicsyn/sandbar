@@ -22,26 +22,26 @@ export function providerSetup(args = process.argv.slice(2)) {
     throw new Error("Usage: hello|edit --provider daytona|e2b");
   }
 
-  switch (args[1]) {
+  return { adapter: providerAdapter(args[1], 600) };
+}
+
+export function providerAdapter(provider: string | undefined, lifetimeSeconds: number) {
+  switch (provider) {
     case "daytona":
-      return {
-        adapter: daytona({
-          apiKey: required("DAYTONA_API_KEY"),
-          target: required("DAYTONA_TARGET"),
-          environment: Image.prepared(required("DAYTONA_SNAPSHOT")),
-          lifecycle: { lifetimeSeconds: 600 },
-          network: "daytona-default",
-        }),
-      };
+      return daytona({
+        apiKey: required("DAYTONA_API_KEY"),
+        target: required("DAYTONA_TARGET"),
+        environment: Image.prepared(required("DAYTONA_SNAPSHOT")),
+        lifecycle: { lifetimeSeconds },
+        network: "daytona-default",
+      });
     case "e2b":
-      return {
-        adapter: e2b({
-          apiKey: required("E2B_API_KEY"),
-          templateId: process.env.E2B_TEMPLATE_ID?.trim() || "base",
-          lifecycle: { lifetimeSeconds: 600 },
-          network: "internet",
-        }),
-      };
+      return e2b({
+        apiKey: required("E2B_API_KEY"),
+        templateId: process.env.E2B_TEMPLATE_ID?.trim() || "base",
+        lifecycle: { lifetimeSeconds },
+        network: "internet",
+      });
     default:
       throw new Error("Choose --provider daytona or --provider e2b");
   }

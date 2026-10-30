@@ -45,20 +45,28 @@ export function agentEnvironment(): AgentEnvironment {
     NO_COLOR: "1",
   };
 
-  const keyName = process.env.OPENCODE_API_KEY_ENV?.trim();
+  const key = modelKey();
 
-  if (keyName) {
-    if (!/^[A-Z][A-Z0-9_]*_API_KEY$/.test(keyName) || /^(DAYTONA|E2B)_/.test(keyName)) {
-      throw new Error("OPENCODE_API_KEY_ENV must name a model API key, never a sandbox credential");
-    }
-
-    const key = process.env[keyName]?.trim();
-
-    if (!key) throw new Error(`Set the selected model credential ${keyName}`);
-    env[keyName] = key;
-  }
+  if (key) env[key.name] = key.value;
 
   return env;
+}
+
+// Only the model key named by OPENCODE_API_KEY_ENV reaches the sandbox.
+export function modelKey() {
+  const name = process.env.OPENCODE_API_KEY_ENV?.trim();
+
+  if (!name) return null;
+
+  if (!/^[A-Z][A-Z0-9_]*_API_KEY$/.test(name) || /^(DAYTONA|E2B)_/.test(name)) {
+    throw new Error("OPENCODE_API_KEY_ENV must name a model API key, never a sandbox credential");
+  }
+
+  const value = process.env[name]?.trim();
+
+  if (!value) throw new Error(`Set the selected model credential ${name}`);
+
+  return { name, value };
 }
 
 export async function installOpenCode(

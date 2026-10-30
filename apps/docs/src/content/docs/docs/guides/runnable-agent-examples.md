@@ -1,9 +1,9 @@
 ---
 title: Runnable agent examples
-description: Run OpenCode inside a Daytona or E2B sandbox, capture its answer, or edit a remote file.
+description: Run OpenCode inside a Daytona or E2B sandbox, capture its answer, edit a remote file, or attach to an OpenCode 2 server in a box.
 ---
 
-Run two small TypeScript applications from the Sandbar checkout. They use the same public execution and file API with either official provider:
+Run these small TypeScript applications from the Sandbar checkout. They use the same public execution and file API with either official provider:
 
 | Workflow | What it does                                                                                                                                | Source                                                                                                     |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -43,6 +43,24 @@ bun run --cwd examples edit --provider e2b
 ```
 
 Each invocation creates one sandbox and attempts destruction in `finally`, then closes the client. `hello` normally prints an answer containing `4`; `edit` verifies the exact returned file bytes `Hello, Sandbar!\n`.
+
+## OpenCode 2 in a box
+
+The `box` example runs an OpenCode 2 server next to your project in a sandbox and attaches your local OpenCode 2 client to it. The agent's commands and edits happen in the sandbox; you drive it from your own terminal and pull the work back when you are done.
+
+```sh
+bun run --cwd examples box up --provider e2b --project ~/code/my-app
+bun run --cwd examples box attach
+bun run --cwd examples box pull
+bun run --cwd examples box down
+```
+
+- `up` uploads your tracked and unignored files plus `.git` to the same path in the sandbox, starts `opencode2 serve` with a random password and waits until it is healthy.
+- `attach` connects your local `opencode2 --server` through a localhost proxy that adds the provider's preview headers, so it works with Daytona's protected previews as well as E2B's public ones.
+- `pull` copies the project back over your checkout, `.git` included, so the agent's commits show up in your `git log`. It refuses while your checkout has uncommitted changes unless you pass `--force`.
+- `down` destroys the sandbox.
+
+Set `GH_TOKEN` in `examples/.env.local` to let the agent push to GitHub from the sandbox; use a fine-grained token limited to the repository, since the agent can read it. Add `gh` to your image if the agent should open pull requests. The [examples README](https://github.com/pandemicsyn/sandbar/blob/main/examples/README.md#opencode-2-in-a-box) lists guest requirements and limits.
 
 ## Model and lifetime
 
